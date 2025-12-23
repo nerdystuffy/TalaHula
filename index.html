@@ -1,0 +1,283 @@
+<!DOCTYPE html>
+<html lang="tl">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Talahula - Ang Wordle ng Pilipinas</title>
+    <style>
+        :root {
+            /* --- FILIPINO FLAG PALETTE --- */
+            --ph-yellow: #FCD116; 
+            --ph-blue:   #0038A8; 
+            --ph-red:    #CE1126; 
+            --ph-white:  #FFFFFF;
+            --narra-wood: #5D4037;
+            --bamboo-light: #D7CCC8;
+            --bg-color: #fdf6e3; 
+            --text-color: #3e2723; 
+            --key-bg: #efebe9;
+            --key-text: #3e2723;
+            --border-color: #a1887f; 
+            --correct-bg: var(--ph-yellow); 
+            --correct-text: #3e2723; 
+            --present-bg: var(--ph-blue); 
+            --present-text: #ffffff; 
+            --absent-bg: var(--ph-red); 
+            --absent-text: #ffffff; 
+            --modal-bg: rgba(255, 255, 255, 0.98);
+            --shadow: 0 4px 6px rgba(0,0,0,0.2);
+            --btn-bg: var(--ph-blue); 
+        }
+
+        [data-theme="dark"] {
+            --bg-color: #1a2332; 
+            --text-color: #e6e6e6;
+            --key-bg: #37474f;
+            --key-text: #eceff1;
+            --border-color: #546e7a;
+            --correct-bg: #FBC02D; 
+            --correct-text: #263238; 
+            --present-bg: #4285F4; 
+            --present-text: #ffffff;
+            --absent-bg: #D32F2F; 
+            --absent-text: #ffffff;
+            --modal-bg: rgba(38, 50, 56, 0.98);
+            --btn-bg: #FBC02D;
+        }
+
+        [data-theme="dark"] body {
+            background-color: var(--bg-color);
+            background-image: 
+                radial-gradient(circle at 50% 50%, #263238 2px, transparent 2.5px),
+                linear-gradient(0deg, transparent 49%, #263238 50%, transparent 51%),
+                linear-gradient(90deg, transparent 49%, #263238 50%, transparent 51%);
+            background-size: 30px 30px, 60px 60px, 60px 60px;
+            background-position: 0 0;
+        }
+
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            transition: background-color 0.3s, color 0.3s, border-color 0.3s;
+            -webkit-tap-highlight-color: transparent;
+        }
+
+        body {
+            background-color: #fcf6e6;
+            color: var(--text-color);
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            height: 100dvh; 
+            background-image: 
+                linear-gradient(45deg, #e4d5b7 25%, transparent 25%, transparent 75%, #e4d5b7 75%, #e4d5b7),
+                linear-gradient(45deg, #e4d5b7 25%, transparent 25%, transparent 75%, #e4d5b7 75%, #e4d5b7);
+            background-position: 0 0, 10px 10px;
+            background-size: 20px 20px;
+            overflow-x: hidden; 
+        }   
+
+        header {
+            width: 100%;
+            padding: 10px 20px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            border-bottom: 5px solid;
+            border-image: linear-gradient(to right, var(--ph-blue) 33%, var(--ph-red) 33%, var(--ph-red) 66%, var(--ph-yellow) 66%) 1;
+            max-width: 600px;
+            background-color: var(--bg-color);
+            z-index: 10;
+        }
+
+        .header-left { display: flex; align-items: center; gap: 10px; }
+        h1 { font-weight: 900; letter-spacing: 1px; text-transform: uppercase; font-size: 1.6rem; color: var(--text-color); text-shadow: 2px 2px 0px var(--ph-yellow); }
+        [data-theme="dark"] h1 { text-shadow: 2px 2px 0px #000; }
+
+        .theme-switch { display: inline-block; height: 24px; position: relative; width: 46px; }
+        .theme-switch input { display: none; }
+        .slider { background-color: #ccc; bottom: 0; cursor: pointer; left: 0; position: absolute; right: 0; top: 0; transition: .4s; border-radius: 34px; }
+        .slider:before { background-color: white; bottom: 3px; content: ""; height: 18px; left: 3px; position: absolute; transition: .4s; width: 18px; border-radius: 50%; }
+        input:checked + .slider { background-color: var(--btn-bg); }
+        input:checked + .slider:before { transform: translateX(22px); }
+
+        .landing-container {
+            flex-grow: 1;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            text-align: center;
+            padding: 20px;
+            gap: 30px;
+            width: 100%; 
+            max-width: 600px;
+        }
+
+        .demo-row { 
+            display: flex; 
+            gap: 4px; 
+            justify-content: center;
+            width: 100%;
+            perspective: 500px; /* Adds depth for 3D transforms */
+        }
+        
+        .tile {
+            width: 11vw;       
+            height: 11vw;      
+            max-width: 52px;   
+            max-height: 52px;
+            
+            border: 2px solid var(--border-color);
+            background-color: rgba(255,255,255,0.3);
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            
+            font-size: clamp(1.2rem, 5vw, 1.8rem); 
+            
+            font-weight: 800;
+            text-transform: uppercase;
+            border-radius: 4px;
+            color: var(--text-color);
+            
+            /* --- UPDATED INTERACTIVITY --- */
+            cursor: default;
+            user-select: none;
+            /* Cubic bezier makes it bouncy like a spring */
+            transition: transform 0.4s cubic-bezier(0.175, 0.885, 0.32, 1.275), 
+                        background-color 0.3s, 
+                        border-color 0.3s,
+                        box-shadow 0.3s;
+        }
+
+        /* --- HOVER EFFECTS --- */
+        .tile:hover {
+            box-shadow: 0 15px 25px rgba(0,0,0,0.15);
+            z-index: 2;
+        }
+        
+        /* Odd tiles rotate left */
+        .tile:nth-child(odd):hover {
+            transform: translateY(-12px) scale(1.15) rotate(-6deg);
+        }
+
+        /* Even tiles rotate right */
+        .tile:nth-child(even):hover {
+            transform: translateY(-12px) scale(1.15) rotate(6deg);
+        }
+
+        .tile[data-state="correct"] { background-color: var(--correct-bg); color: var(--correct-text); border-color: var(--correct-bg); }
+        .tile[data-state="present"] { background-color: var(--present-bg); color: var(--present-text); border-color: var(--present-bg); }
+        .tile[data-state="absent"] { background-color: var(--absent-bg); color: var(--absent-text); border-color: var(--absent-bg); }
+
+        .premise {
+            width: 100%; 
+            max-width: 400px;
+            line-height: 1.6;
+            font-size: 1.1rem;
+            background-color: var(--modal-bg);
+            padding: 20px;
+            border-radius: 8px;
+            box-shadow: var(--shadow);
+            border: 1px solid var(--border-color);
+        }
+        
+        .play-btn {
+            background-color: var(--btn-bg); 
+            color: white;
+            border: none;
+            padding: 15px 50px;
+            border-radius: 50px;
+            font-size: 1.2rem;
+            font-weight: bold;
+            cursor: pointer;
+            text-transform: uppercase;
+            text-decoration: none;
+            display: inline-block;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.2);
+            transform: translateY(0);
+            transition: all 0.2s cubic-bezier(0.25, 0.8, 0.25, 1);
+        }
+
+        .play-btn:hover {
+            transform: translateY(-3px);
+            box-shadow: 0 8px 15px rgba(0,0,0,0.3);
+            filter: brightness(1.1);
+        }
+        .play-btn:active {
+            transform: translateY(1px);
+            box-shadow: 0 2px 4px rgba(0,0,0,0.2);
+        }
+        
+        [data-theme="dark"] .play-btn { color: #263238; } 
+
+        @media (max-width: 380px) {
+            h1 { font-size: 1.4rem; }
+            .premise { font-size: 1rem; padding: 15px; }
+            .play-btn { padding: 12px 40px; font-size: 1.1rem; }
+        }
+    </style>
+</head>
+<body>
+
+    <header>
+        <div class="header-left">
+            <h1>TALAHULA</h1>
+            <span style="font-size: 1.5rem;">🇵🇭</span>
+        </div>
+        <div class="controls">
+            <label class="theme-switch">
+                <input type="checkbox" id="theme-toggle">
+                <span class="slider"></span>
+            </label>
+        </div>
+    </header>
+
+    <div class="landing-container">
+        <div class="demo-row" id="title-tiles">
+            <div class="tile" data-state="correct">T</div>
+            <div class="tile" data-state="present">A</div>
+            <div class="tile" data-state="absent">L</div>
+            <div class="tile">A</div>
+            <div class="tile" data-state="correct">H</div>
+            <div class="tile" data-state="present">U</div>
+            <div class="tile" data-state="absent">L</div>
+            <div class="tile">A</div>
+        </div>
+
+        <div class="premise">
+            <p><strong>Ang Wordle ng Pilipinas.</strong></p>
+            <br>
+            <p>Hulaan ang salita sa loob ng 6 na subok</p>
+            <p>at matuto ng wikang Filipino.</p>
+        </div>
+
+        <a href="login.html" class="play-btn">MAGSIMULA</a>
+    </div>
+
+   <script type="module" src="firebase-script.js"></script>
+
+    <script>
+        const toggleSwitch = document.querySelector('#theme-toggle');
+        const currentTheme = localStorage.getItem('theme');
+
+        if (currentTheme) {
+            document.documentElement.setAttribute('data-theme', currentTheme === 'dark' ? 'dark' : 'light');
+            if (currentTheme === 'dark') toggleSwitch.checked = true;
+        }
+
+        toggleSwitch.addEventListener('change', function(e) {
+            if (e.target.checked) {
+                document.documentElement.setAttribute('data-theme', 'dark');
+                localStorage.setItem('theme', 'dark');
+            } else {
+                document.documentElement.setAttribute('data-theme', 'light');
+                localStorage.setItem('theme', 'light');
+            }
+        });
+    </script>
+</body>
+</html>

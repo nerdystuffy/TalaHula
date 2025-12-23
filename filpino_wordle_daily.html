@@ -1,0 +1,1752 @@
+<!DOCTYPE html>
+<html lang="tl">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>TalaHula - Daily Filipino Word Game</title>
+    
+    <script type="module">
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/11.0.2/firebase-app.js";
+        // Added updateProfile to imports
+        import { getAuth, signInAnonymously, onAuthStateChanged, updateProfile } from "https://www.gstatic.com/firebasejs/11.0.2/firebase-auth.js";
+        import { getFirestore, doc, getDoc, setDoc, updateDoc, increment } from "https://www.gstatic.com/firebasejs/11.0.2/firebase-firestore.js";
+
+        // --- FIREBASE CONFIGURATION ---
+        const firebaseConfig = typeof __firebase_config !== 'undefined' ? JSON.parse(__firebase_config) : {
+            apiKey: "AIzaSyBKsGf9_qydnsTxOl1tqEa_cPTExkYCrUY", 
+            authDomain: "talahula-4384e.firebaseapp.com",
+            projectId: "talahula-4384e",
+            storageBucket: "talahula-4384e.firebasestorage.app",
+            messagingSenderId: "243686926208",
+            appId: "1:243686926208:web:3c52bbf254a5ea0937c365"
+        };
+        
+        // Explicitly define the App ID
+        const GAME_APP_ID = 'talahula_web_v1';
+
+        // Initialize Firebase
+        const app = initializeApp(firebaseConfig);
+        const auth = getAuth(app);
+        const db = getFirestore(app);
+
+        // Expose to window for the game logic to access
+        window.db = db;
+        window.auth = auth;
+        window.appId = GAME_APP_ID;
+        window.firestoreFunctions = { doc, getDoc, setDoc, updateDoc, increment };
+        window.currentUser = null;
+
+        // Authentication Logic
+        const initAuth = async () => {
+            try {
+                // If not signed in via login.html, do anon sign in
+                if (!auth.currentUser) {
+                    await signInAnonymously(auth);
+                }
+            } catch (error) {
+                console.error("Auth error:", error);
+            }
+        };
+        
+        initAuth();
+
+        onAuthStateChanged(auth, (user) => {
+            if (user) {
+                console.log("User connected:", user.uid);
+                window.currentUser = user;
+                // Dispatch event so game knows auth is ready
+                window.dispatchEvent(new Event('userReady'));
+            }
+        });
+        
+        // --- IMPROVED: FUNCTION TO SAVE NAME ---
+        window.savePlayerName = async function() {
+            const nameInput = document.getElementById('player-name-input');
+            const newName = nameInput.value.trim();
+            const btn = nameInput.nextElementSibling; // The SAVE button
+
+            if (!newName) {
+                alert("Please enter a name.");
+                return;
+            }
+            
+            // Double check user connection
+            const user = window.currentUser || window.auth.currentUser;
+            if (!user) {
+                alert("Still connecting to server... please wait 2 seconds and try again.");
+                return;
+            }
+
+            try {
+                btn.textContent = "SAVING..."; // Loading state
+                btn.disabled = true;
+                
+                // 1. Save to Database (Priority for Leaderboard)
+                // Using setDoc with merge ensures it creates the file if it doesn't exist
+                const { doc, setDoc } = window.firestoreFunctions;
+                const statsRef = doc(window.db, 'artifacts', window.appId, 'users', user.uid, 'stats', 'daily');
+                
+                await setDoc(statsRef, { 
+                    username: newName,
+                    lastUpdated: new Date()
+                }, { merge: true });
+
+                // 2. Update Auth Profile (Secondary - might fail on some networks but that's ok)
+                try {
+                    await updateProfile(user, { displayName: newName });
+                } catch (authErr) {
+                    console.warn("Profile update warning (safe to ignore):", authErr);
+                }
+
+                // Success UI
+                btn.textContent = "OK!";
+                btn.style.backgroundColor = "var(--correct-bg)";
+                setTimeout(() => {
+                    btn.textContent = "SAVE";
+                    btn.style.backgroundColor = "";
+                    btn.disabled = false;
+                }, 2000);
+                
+                showMessage("Na-save na ang pangalan!");
+
+            } catch (e) {
+                console.error("Error saving name:", e);
+                btn.textContent = "RETRY";
+                btn.disabled = false;
+                
+                // Show specific error to help debug
+                if (e.code === 'permission-denied') {
+                    alert("Error: Permission Denied.\n\nYou need to fix your Firestore Rules in the Firebase Console.\nAllow read/write to: artifacts/" + window.appId + "/users/...");
+                } else {
+                    alert("Error saving: " + e.message);
+                }
+            }
+        };
+    </script>
+
+    <style>
+    :root {
+        /* --- FILIPINO FLAG PALETTE --- */
+        --ph-yellow: #FFE97F; /* Sun Yellow */
+        --ph-blue:   #4773CC; /* Royal Blue */
+        --ph-red:    #BF4242; /* Flag Red */
+        --ph-white:  #D2D6D8;
+        
+        /* Wood/Nature Tones */
+        --narra-wood: #5D4037;
+        --bamboo-light: #D7CCC8;
+        
+        /* --- THEME PALETTE (Araw/Light) --- */
+        --bg-color: #fdf6e3; /* Manila Paper tone */
+        --text-color: #3e2723; /* Dark Coffee */
+        
+        /* Keyboards */
+        --key-bg: #efebe9;
+        --key-text: #3e2723;
+        --border-color: #a1887f; /* Light Wood */
+        
+        /* --- GAMEPLAY COLORS --- */
+        --correct-bg: var(--ph-yellow); 
+        --correct-text: #3e2723; /* Added Missing Variable */
+        --present-bg: var(--ph-blue); 
+        --present-text: #ffffff;
+        --absent-bg: var(--ph-red); 
+        --absent-text: #ffffff; 
+        
+        /* UI Elements */
+        --modal-bg: rgba(255, 255, 255, 0.98);
+        --shadow: 0 4px 6px rgba(0,0,0,0.2);
+        --btn-bg: var(--ph-blue); 
+
+        /* Badge Vars (Light) */
+        --badge-bg: var(--ph-blue);
+        --badge-text: #ffffff;
+    }
+
+    [data-theme="dark"] {
+        --bg-color: #1a2332; 
+        --text-color: #e6e6e6;
+        --key-bg: #37474f;
+        --key-text: #eceff1;
+        --border-color: #546e7a;
+        --correct-bg: #FBC02D; 
+        --correct-text: #263238; 
+        --present-bg: #4285F4; 
+        --present-text: #ffffff;
+        --absent-bg: #D32F2F; 
+        --absent-text: #ffffff;
+        --modal-bg: rgba(38, 50, 56, 0.98);
+        --btn-bg: #FBC02D;
+        
+        /* Badge Vars (Dark) */
+        --badge-bg: #FBC02D;
+        --badge-text: #3e2723;
+    }
+
+    [data-theme="dark"] body {
+        background-color: var(--bg-color);
+        background-image: 
+            radial-gradient(circle at 50% 50%, #263238 2px, transparent 2.5px),
+            linear-gradient(0deg, transparent 49%, #263238 50%, transparent 51%),
+            linear-gradient(90deg, transparent 49%, #263238 50%, transparent 51%);
+        background-size: 30px 30px, 60px 60px, 60px 60px;
+        background-position: 0 0;
+    }
+
+    * {
+        box-sizing: border-box;
+        margin: 0;
+        padding: 0;
+        font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+        transition: background-color 0.3s, color 0.3s, border-color 0.3s;
+        -webkit-tap-highlight-color: transparent;
+    }
+
+    body {
+        background-color: #fcf6e6;
+        color: var(--text-color);
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        height: 100dvh;
+        overflow: hidden;
+        background-image: 
+            linear-gradient(45deg, #e4d5b7 25%, transparent 25%, transparent 75%, #e4d5b7 75%, #e4d5b7),
+            linear-gradient(45deg, #e4d5b7 25%, transparent 25%, transparent 75%, #e4d5b7 75%, #e4d5b7);
+        background-position: 0 0, 10px 10px;
+        background-size: 20px 20px;
+    }   
+
+    header {
+        width: 100%;
+        padding: 10px 20px;
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        border-bottom: 5px solid;
+        border-image: linear-gradient(to right, var(--ph-blue) 33%, var(--ph-red) 33%, var(--ph-red) 66%, var(--ph-yellow) 66%) 1;
+        max-width: 600px;
+        flex-shrink: 0;
+        background-color: var(--bg-color);
+        z-index: 10;
+    }
+
+    .header-left {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+    }
+
+    h1 {
+        font-weight: 900;
+        letter-spacing: 1px;
+        text-transform: uppercase;
+        font-size: 1.6rem;
+        color: var(--text-color);
+    }
+
+    /* Added hover effect for the title link */
+    h1 a {
+        color: inherit;
+        text-decoration: none;
+        transition: color 0.3s ease;
+    }
+
+    h1 a:hover {
+        color: var(--btn-bg); /* This variable is Blue in Light Mode, Yellow in Dark Mode */
+    }
+
+    .mode-badge {
+            font-size: 0.65rem;
+            background-color: var(--ph-blue); 
+            color: #ffffff;                   
+            padding: 4px 10px;                
+            border-radius: 20px;              
+            margin-left: 8px;
+            text-transform: uppercase;
+            font-weight: 800;
+            letter-spacing: 0.5px;
+            vertical-align: middle;
+            position: relative;
+            top: -3px;
+            border: 1px solid rgba(255,255,255,0.2);
+            box-shadow: 0 2px 4px rgba(0,0,0,0.2); 
+        }
+
+        [data-theme="dark"] .mode-badge {
+            background-color: var(--ph-yellow);
+            color: #3e2723;
+            border: none;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.5);
+        }
+
+    .sun-icon {
+        color: #FF9800; /* Changed to a more noticeable orange */
+        animation: spin 12s linear infinite;
+        display: block;
+    }
+
+    .moon-icon {
+        color: var(--correct-bg);
+        display: none;
+    }
+
+    [data-theme="dark"] .sun-icon { display: none; }
+    [data-theme="dark"] .moon-icon { display: block; }
+
+    @keyframes spin { 100% { transform: rotate(360deg); } }
+
+    .controls {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+    }
+    
+    .icon-btn {
+        background: none;
+        border: none;
+        cursor: pointer;
+        color: var(--text-color);
+        padding: 4px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        border-radius: 4px;
+        transition: background-color 0.2s;
+    }
+    
+    .icon-btn:hover {
+        background-color: rgba(0,0,0,0.05);
+    }
+    
+    [data-theme="dark"] .icon-btn:hover {
+        background-color: rgba(255,255,255,0.1);
+    }
+
+    .theme-switch {
+        display: inline-block;
+        height: 24px;
+        position: relative;
+        width: 46px;
+    }
+
+    .theme-switch input { display: none; }
+
+    .slider {
+        background-color: #ccc;
+        bottom: 0;
+        cursor: pointer;
+        left: 0;
+        position: absolute;
+        right: 0;
+        top: 0;
+        transition: .4s;
+        border-radius: 34px;
+    }
+
+    .slider:before {
+        background-color: white;
+        bottom: 3px;
+        content: "";
+        height: 18px;
+        left: 3px;
+        position: absolute;
+        transition: .4s;
+        width: 18px;
+        border-radius: 50%;
+    }
+
+    input:checked + .slider { background-color: var(--btn-bg); }
+    input:checked + .slider:before { transform: translateX(22px); }
+
+    #main-game-area {
+        flex-grow: 1;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center; 
+        gap: 2vh; 
+        width: 100%;
+        overflow-y: auto;
+        position: relative; 
+        background: radial-gradient(circle, var(--bg-color) 0%, rgba(0,0,0,0) 80%);
+    }
+
+    #game-container {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        flex-grow: 0;
+        padding: 0;
+        width: 100%;
+        max-width: 400px;
+        overflow: visible;
+    }
+
+    #grid {
+        display: grid;
+        grid-template-rows: repeat(6, 1fr);
+        grid-gap: 5px;
+    }
+
+    .row {
+        display: grid;
+        grid-template-columns: repeat(6, 1fr);
+        grid-gap: 5px;
+    }
+
+    .tile {
+        width: 52px;
+        height: 52px;
+        border: 2px solid var(--border-color);
+        background-color: rgba(255,255,255,0.3);
+        display: flex;
+        justify-content: center;
+        align-items: center;
+        font-size: 1.8rem;
+        font-weight: 800;
+        text-transform: uppercase;
+        user-select: none;
+        border-radius: 4px;
+    }
+
+    .tile[data-state="filled"] {
+        border-color: var(--text-color);
+        background-color: var(--bg-color);
+        animation: pop 0.1s;
+    }
+
+    .tile[data-state="correct"] {
+        background-color: var(--correct-bg);
+        color: var(--correct-text); 
+        border-color: var(--correct-bg);
+    }
+
+    .tile[data-state="present"] {
+        background-color: var(--present-bg);
+        color: var(--present-text);
+        border-color: var(--present-bg);
+    }
+
+    .tile[data-state="absent"] {
+        background-color: var(--absent-bg);
+        color: var(--absent-text);
+        border-color: var(--absent-bg);
+    }
+
+    .tile.flip { animation: flip 0.6s ease; }
+
+    /* --- FIXED: Help Modal Examples --- */
+    .example-row {
+        display: flex;
+        gap: 5px;
+        margin: 10px 0 5px 0;
+    }
+    
+    .example-tile {
+        width: 40px;
+        height: 40px;
+        font-size: 1.5rem;
+        display: flex; 
+        justify-content: center;
+        align-items: center;
+        font-weight: bold;
+        
+        /* Ensure default state is visible in modal */
+        border: 2px solid var(--border-color);
+        background-color: transparent; 
+        color: var(--text-color);
+    }
+
+    /* Force visibility of states in help modal */
+    .example-tile[data-state="correct"] {
+        background-color: var(--correct-bg) !important;
+        color: var(--correct-text) !important;
+        border-color: var(--correct-bg) !important;
+    }
+
+    .example-tile[data-state="present"] {
+        background-color: var(--present-bg) !important;
+        color: var(--present-text) !important;
+        border-color: var(--present-bg) !important;
+    }
+
+    .example-tile[data-state="absent"] {
+        background-color: var(--absent-bg) !important;
+        color: var(--absent-text) !important;
+        border-color: var(--absent-bg) !important;
+    }
+
+    #keyboard-area {
+        width: 100%;
+        max-width: 500px;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        padding-bottom: 10px; 
+        flex-shrink: 0;
+    }
+
+    #controls-row {
+        width: 100%;
+        display: flex;
+        justify-content: center; 
+        padding: 0 10px 10px 10px;
+        gap: 10px;
+    }
+
+    #hint-btn {
+        background-color: transparent; 
+        border: none;
+        padding: 5px; 
+        cursor: pointer;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        min-width: 44px; 
+        min-height: 44px;
+        transition: transform 0.1s, opacity 0.3s;
+        position: relative; /* Essential for badge positioning */
+        overflow: visible;
+    }
+
+    #hint-btn:active { transform: scale(0.90); }
+
+    .hint-icon {
+        height: 40px; 
+        width: auto; 
+        display: block;
+        pointer-events: none; 
+        filter: drop-shadow(1px 1px 0px rgba(0,0,0,0.2));
+    }
+
+    /* Badge Style */
+    .badge {
+        position: absolute;
+        top: -4px;
+        right: -4px;
+        background-color: var(--badge-bg);
+        color: var(--badge-text);
+        border-radius: 50%;
+        width: 20px;
+        height: 20px;
+        font-size: 0.75rem;
+        display: flex;
+        justify-content: center;
+        align-items: center;
+        font-weight: 800;
+        box-shadow: 0 2px 4px rgba(0,0,0,0.2);
+        pointer-events: none;
+        border: 2px solid var(--bg-color); /* Cutout effect against bg */
+        z-index: 2;
+        transition: transform 0.2s cubic-bezier(0.175, 0.885, 0.32, 1.275), background-color 0.3s, color 0.3s;
+    }
+
+    /* Pulse animation for updates */
+    .badge.pulse {
+        transform: scale(1.3);
+    }
+
+    /* Empty state */
+    .badge.empty {
+        background-color: #9e9e9e;
+        color: #ffffff;
+    }
+
+    #keyboard {
+        width: 100%;
+        padding: 0 8px;
+        display: flex;
+        flex-direction: column;
+        gap: 6px;
+    }
+
+    .key-row {
+        display: flex;
+        justify-content: center;
+        gap: 4px;
+        width: 100%;
+    }
+
+    .key {
+        font-family: inherit;
+        font-weight: bold;
+        border: 0;
+        padding: 0;
+        margin: 0;
+        height: 54px; 
+        border-radius: 6px;
+        cursor: pointer;
+        user-select: none;
+        background-color: var(--key-bg);
+        color: var(--key-text);
+        flex: 1;
+        display: flex;
+        justify-content: center;
+        align-items: center;
+        text-transform: uppercase;
+        font-size: 0.9rem;
+        touch-action: manipulation;
+        box-shadow: 0 2px 0 rgba(0,0,0,0.2);
+    }
+
+    .key:active {
+        transform: translateY(2px);
+        box-shadow: none;
+    }
+
+    .key-wide {
+        flex: 1.5;
+        font-size: 0.8rem;
+    }
+
+    .key[data-state="correct"] {
+        background-color: var(--correct-bg);
+        color: var(--correct-text); 
+    }
+
+    .key[data-state="present"] {
+        background-color: var(--present-bg);
+        color: var(--present-text); 
+    }
+
+    .key[data-state="absent"] {
+        background-color: var(--absent-bg);
+        color: var(--absent-text); 
+    }
+
+    @media (max-height: 700px) {
+        #main-game-area {
+            gap: 5px; 
+            justify-content: flex-start; 
+            padding-top: 10px;
+        }
+        .tile {
+            width: 40px;
+            height: 40px;
+            font-size: 1.4rem;
+        }
+        .key { height: 48px; }
+        header { padding: 8px 15px; }
+        h1 { font-size: 1.2rem; }
+    }
+
+    @media (max-height: 600px) {
+        .tile {
+            width: 32px;
+            height: 32px;
+            font-size: 1.2rem;
+        }
+        .key {
+            height: 40px;
+            font-size: 0.8rem;
+        }
+        #hint-btn { padding: 6px 12px; }
+    }
+
+    @keyframes pop {
+        0% { transform: scale(1); }
+        50% { transform: scale(1.1); }
+        100% { transform: scale(1); }
+    }
+
+    @keyframes flip {
+        0% { transform: rotateX(0); }
+        50% { transform: rotateX(90deg); }
+        100% { transform: rotateX(0); }
+    }
+
+    @keyframes shake {
+        10%, 90% { transform: translateX(-1px); }
+        20%, 80% { transform: translateX(2px); }
+        30%, 50%, 70% { transform: translateX(-4px); }
+        40%, 60% { transform: translateX(4px); }
+    }
+
+    .shake { animation: shake 0.5s; }
+
+    #message-container {
+        position: fixed;
+        top: 75px;
+        left: 50%;
+        transform: translateX(-50%);
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        gap: 10px;
+        z-index: 1000;
+        pointer-events: none;
+        width: 90%;
+    }
+
+    .toast {
+        background-color: var(--text-color);
+        color: var(--bg-color);
+        padding: 10px 20px;
+        border-radius: 5px;
+        font-weight: bold;
+        opacity: 1;
+        transition: opacity 0.3s;
+        box-shadow: var(--shadow);
+        text-align: center;
+        border: 2px solid var(--border-color);
+    }
+
+    .toast.fade-out { opacity: 0; }
+
+    /* Unified Modal Styles */
+    .modal-overlay {
+        position: fixed;
+        top: 0;
+        left: 0;
+        width: 100%;
+        height: 100%;
+        background-color: rgba(0,0,0,0.6); 
+        display: none;
+        justify-content: center;
+        align-items: center;
+        z-index: 2000;
+        backdrop-filter: blur(2px);
+    }
+
+    .modal-content {
+        background-color: var(--modal-bg);
+        color: var(--text-color);
+        padding: 30px;
+        border-radius: 10px;
+        box-shadow: var(--shadow);
+        max-width: 90%;
+        width: 450px;
+        text-align: center;
+        position: relative;
+        border-top: 5px solid var(--ph-blue);
+        border-bottom: 5px solid var(--ph-red);
+        border-left: 2px solid var(--border-color);
+        border-right: 2px solid var(--border-color);
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+    }
+
+    .close-modal {
+        position: absolute;
+        top: 10px;
+        right: 15px;
+        background: none;
+        border: none;
+        font-size: 1.8rem;
+        cursor: pointer;
+        color: var(--text-color);
+        opacity: 0.6;
+    }
+    .close-modal:hover { opacity: 1; }
+
+    .modal-content h2 { 
+        margin-bottom: 15px; 
+        color: var(--ph-blue); 
+        font-size: 1.5rem;
+        text-transform: uppercase;
+        letter-spacing: 1px;
+    }
+    [data-theme="dark"] .modal-content h2 { color: var(--ph-yellow); }
+
+    .modal-content p { margin-bottom: 20px; line-height: 1.5; }
+    
+    .play-btn {
+        background-color: var(--btn-bg); 
+        color: var(--text-color);
+        border: none;
+        padding: 12px 24px;
+        border-radius: 5px;
+        font-size: 1rem;
+        font-weight: bold;
+        cursor: pointer;
+        text-transform: uppercase;
+        box-shadow: 0 3px 6px rgba(0,0,0,0.2);
+        transition: transform 0.1s;
+        text-decoration: none;
+        display: inline-block;
+        margin: 5px 0;
+        min-width: 200px;
+    }
+    
+    .secondary-btn {
+        background-color: var(--ph-yellow);
+        color: #3e2723;
+    }
+    [data-theme="dark"] .secondary-btn {
+        background-color: var(--ph-blue);
+        color: white;
+    }
+    
+    .header-img {
+        height: 25px;
+        width: auto;
+        display: block;
+    }
+    [data-theme="light"] .play-btn { color: white; }
+    [data-theme="light"] .secondary-btn { color: #3e2723; }
+
+    .play-btn:hover { opacity: 0.9; }
+    .play-btn:active { transform: scale(0.95); }
+
+    /* Stats Specific Styles */
+    .stat-row {
+        display: flex;
+        justify-content: space-between;
+        margin-bottom: 25px;
+        padding: 0 10px;
+        width: 100%;
+    }
+    .stat-box {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        flex: 1;
+    }
+    .stat-val {
+        font-size: 1.8rem;
+        font-weight: 800;
+        margin-bottom: 5px;
+    }
+    .stat-label {
+        font-size: 0.65rem;
+        text-transform: uppercase;
+        font-weight: bold;
+        opacity: 0.8;
+        text-align: center;
+    }
+    
+    h3.graph-title {
+        font-size: 0.9rem;
+        text-transform: uppercase;
+        margin-bottom: 10px;
+        text-align: left;
+        font-weight: bold;
+        opacity: 0.9;
+        width: 100%;
+    }
+
+    .graph-container {
+        display: flex;
+        flex-direction: column;
+        gap: 6px;
+        margin-bottom: 10px;
+        align-items: flex-start;
+        padding: 0 10px;
+        width: 100%;
+    }
+    .graph-row {
+        display: flex;
+        width: 100%;
+        align-items: center;
+        font-size: 0.85rem;
+    }
+    .graph-label {
+        width: 15px;
+        font-weight: bold;
+    }
+    .graph-bar-container {
+        flex-grow: 1;
+        margin-left: 10px;
+        /* background-color: rgba(0,0,0,0.05); */
+        border-radius: 2px;
+        overflow: hidden;
+    }
+    .graph-bar {
+        background-color: var(--ph-blue);
+        color: white;
+        text-align: right;
+        padding: 3px 6px;
+        font-weight: bold;
+        min-width: 1.2rem;
+        font-size: 0.75rem;
+    }
+    [data-theme="dark"] .graph-bar {
+        background-color: var(--ph-yellow);
+        color: #3e2723;
+    }
+    
+    /* Loading Overlay Style */
+    #loading-overlay {
+        position: absolute;
+        top: 0; left: 0; 
+        width: 100%; height: 100%;
+        background-color: var(--bg-color);
+        display: flex;
+        justify-content: center;
+        align-items: center;
+        z-index: 50;
+        font-weight: bold;
+        font-size: 1.2rem;
+        color: var(--text-color);
+        flex-direction: column;
+        gap: 15px;
+    }
+
+    .loading-spinner {
+        display: inline-block;
+        width: 30px;
+        height: 30px;
+        border: 4px solid rgba(0,0,0,0.1);
+        border-radius: 50%;
+        border-top-color: var(--text-color);
+        animation: spin 1s ease-in-out infinite;
+    }
+    [data-theme="dark"] .loading-spinner {
+        border-color: rgba(255,255,255,0.1);
+        border-top-color: var(--text-color);
+    }
+</style>
+</head>
+<body>
+
+    <header>
+        <div class="header-left">
+            <svg class="sun-icon" width="28" height="28" viewBox="0 0 24 24" fill="currentColor">
+                <path d="M12 7c-2.76 0-5 2.24-5 5s2.24 5 5 5 5-2.24 5-5-2.24-5-5-5zm0 9c-2.21 0-4-1.79-4-4s1.79-4 4-4 4 1.79 4 4-1.79 4-4 4zM2 13h2c.55 0 1-.45 1-1s-.45-1-1-1H2c-.55 0-1 .45-1 1s.45 1 1 1zm18 0h2c.55 0 1-.45 1-1s-.45-1-1-1h-2c-.55 0-1 .45-1 1s.45 1 1 1zM11 2v2c0 .55.45 1 1 1s1-.45 1-1V2c0-.55-.45-1-1-1s-1 .45-1 1zm0 18v2c0 .55.45 1 1 1s1-.45 1-1v-2c0-.55-.45-1-1-1s-1 .45-1 1zM5.99 4.58c-.39-.39-1.03-.39-1.41 0-.39.39-.39 1.03 0 1.41l1.06 1.06c.39.39 1.03.39 1.41 0s.39-1.03 0-1.41L5.99 4.58zm12.37 12.37c-.39-.39-1.03-.39-1.41 0-.39.39-.39 1.03 0 1.41l1.06 1.06c.39.39 1.03.39 1.41 0 .39-.39.39-1.03 0-1.41l-1.06-1.06zm1.06-10.96c.39-.39.39-1.03 0-1.41-.39-.39-1.03-.39-1.41 0l-1.06 1.06c-.39.39-.39 1.03 0 1.41s1.03.39 1.41 0l1.06-1.06zM7.05 18.36c.39-.39.39-1.03 0-1.41-.39-.39-1.03-.39-1.41 0l-1.06 1.06c-.39.39-.39 1.03 0 1.41s1.03.39 1.41 0l1.06-1.06z"/>
+            </svg>
+
+            <svg class="moon-icon" width="28" height="28" viewBox="0 0 24 24" fill="currentColor">
+                <path d="M10 2c-1.82 0-3.53.5-5 1.35C7.99 5.08 10 8.3 10 12s-2.01 6.92-5 8.65C6.47 21.5 8.18 22 10 22c5.52 0 10-4.48 10-10S15.52 2 10 2z"/>
+            </svg>
+
+            <h1><a href="menu.html">TalaHula</a> <span id="mode-indicator" class="mode-badge">Daily</span></h1>
+            <img src="https://flagcdn.com/w40/ph.png" alt="Icon" class="header-img">
+        </div>
+        
+        <div class="controls">
+            <!-- Leaderboard Button -->
+            <button id="leaderboard-btn" class="icon-btn" onclick="window.location.href='leaderboard.html'" title="Leaderboard">
+                <svg width="24" height="24" viewBox="0 0 24 24" fill="currentColor">
+                     <path d="M4 19h4v-7H4v7zm6 0h4V5h-4v14zm6 0h4v-10h-4v10z"/>
+                </svg>
+            </button>
+
+            <!-- NEW: How to Play Button (Between Leaderboard and Stats) -->
+            <button id="help-btn" class="icon-btn" onclick="openHelpModal()" title="Paano Maglaro">
+                <svg width="24" height="24" viewBox="0 0 24 24" fill="currentColor">
+                    <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm1 17h-2v-2h2v2zm2.07-7.75l-.9.92C13.45 12.9 13 13.5 13 15h-2v-.5c0-1.1.45-2.1 1.17-2.83l1.24-1.26c.37-.36.59-.86.59-1.41 0-1.1-.9-2-2-2s-2 .9-2 2H8c0-2.21 1.79-4 4-4s4 1.79 4 4c0 .88-.36 1.68-.93 2.25z"/>
+                </svg>
+            </button>
+
+            <button id="stats-btn" class="icon-btn" onclick="openStatsModal()" title="Statistics">
+                <svg width="24" height="24" viewBox="0 0 24 24" fill="currentColor">
+                    <path d="M16 6l2.29 2.29-4.88 4.88-4-4L2 16.59 3.41 18l6-6 4 4 6.3-6.29L22 12V6z"/>
+                </svg>
+            </button>
+            <div class="theme-switch-wrapper">
+                <label class="theme-switch" for="checkbox">
+                    <input type="checkbox" id="checkbox" />
+                    <div class="slider"></div>
+                </label>
+            </div>
+        </div>
+    </header>
+
+    <div id="message-container"></div>
+
+    <main id="main-game-area">
+        <div id="loading-overlay">
+            <div class="loading-spinner"></div>
+            <div>Naglo-load...</div>
+        </div>
+
+        <div id="game-container">
+            <div id="grid"></div>
+        </div>
+
+        <div id="keyboard-area">
+            <div id="controls-row">
+                <button id="hint-btn" title="Hint (Pahiwatig)" onclick="getHint()">
+                    <span id="hint-count-badge" class="badge">3</span>
+                    <svg class="hint-icon" viewBox="0 0 24 24" fill="var(--btn-bg)">
+                        <path d="M9 21c0 .55.45 1 1 1h4c.55 0 1-.45 1-1v-1H9v1zm3-19C8.14 2 5 5.14 5 9c0 2.38 1.19 4.47 3 5.74V17c0 .55.45 1 1 1h6c.55 0 1-.45 1-1v-2.26c1.81-1.27 3-3.36 3-5.74 0-3.86-3.14-7-7-7zm2.85 11.1l-.85.6V16h-4v-2.3l-.85-.6C7.8 12.16 7 10.63 7 9c0-2.76 2.24-5 5-5s5 2.24 5 5c0 1.63-.8 3.16-2.15 4.1z"/>
+                    </svg>
+                </button>
+            </div>
+
+            <div id="keyboard">
+                <div class="key-row" id="row1"></div>
+                <div class="key-row" id="row2"></div>
+                <div class="key-row" id="row3"></div>
+            </div>
+        </div>
+    </main>
+
+    <div id="modal" class="modal-overlay">
+        <div class="modal-content" id="modal-content">
+            <button class="close-modal" onclick="closeModal('modal')">&times;</button>
+            <h2 id="modal-title">Tapos na!</h2>
+            <p id="modal-message"></p>
+            
+            <button id="view-stats-btn" class="play-btn" onclick="openStatsModal()">Tingnan ang Stats</button>
+            
+            <a href="filipino_wordle.html" class="play-btn secondary-btn">Maglaro ng Infinite</a>
+        </div>
+    </div>
+
+    <!-- NEW: HOW TO PLAY MODAL -->
+    <div id="help-modal" class="modal-overlay">
+        <div class="modal-content" style="text-align: left; align-items: flex-start; max-width: 500px;">
+            <button class="close-modal" onclick="closeModal('help-modal')">&times;</button>
+            <h2 style="width: 100%; text-align: center; color: var(--text-color);">PAANO MAGLARO</h2>
+            <p style="margin-bottom: 10px; color: var(--text-color);">Hulaan ang <strong>TalaHula</strong> sa loob ng 6 na subok.</p>
+            <p style="margin-bottom: 10px; color: var(--text-color);">Ang bawat hula ay dapat 6-letra na salitang Filipino. Pindutin ang Enter para ipasa.</p>
+            <p style="color: var(--text-color);">Pagkatapos ng bawat hula, magbabago ang kulay ng mga tile upang ipakita kung gaano kalapit ang iyong hula:</p>
+            
+            <hr style="width:100%; border:0; border-top:1px solid var(--border-color); margin: 15px 0;">
+
+            <p style="font-weight:bold; font-size:0.9rem; color: var(--text-color);">HALIMBAWA</p>
+
+            <div class="example-row">
+                <div class="tile example-tile" data-state="correct">T</div>
+                <div class="tile example-tile">A</div>
+                <div class="tile example-tile">M</div>
+                <div class="tile example-tile">A</div>
+            </div>
+            <p style="font-size: 0.9rem; margin-bottom: 15px; color: var(--text-color);">Ang <strong>T</strong> ay nasa salita at nasa <span style="background-color:var(--correct-bg); color:var(--correct-text); padding: 2px 6px; border-radius: 4px; font-weight:bold;">TAMANG</span> pwesto.</p>
+
+            <div class="example-row">
+                <div class="tile example-tile">L</div>
+                <div class="tile example-tile" data-state="present">I</div>
+                <div class="tile example-tile">K</div>
+                <div class="tile example-tile">O</div>
+            </div>
+            <p style="font-size: 0.9rem; margin-bottom: 15px; color: var(--text-color);">Ang <strong>I</strong> ay nasa salita ngunit nasa <span style="background-color:var(--present-bg); color:var(--present-text); padding: 2px 6px; border-radius: 4px; font-weight:bold;">MALING</span> pwesto.</p>
+
+            <div class="example-row">
+                <div class="tile example-tile">M</div>
+                <div class="tile example-tile">A</div>
+                <div class="tile example-tile">L</div>
+                <div class="tile example-tile" data-state="absent">I</div>
+            </div>
+            <p style="font-size: 0.9rem; color: var(--text-color);">Ang <strong>I</strong> ay <span style="background-color:var(--absent-bg); color:var(--absent-text); padding: 2px 6px; border-radius: 4px; font-weight:bold;">WALA</span> sa salita.</p>
+        </div>
+    </div>
+
+    <div id="stats-modal" class="modal-overlay">
+        <div class="modal-content">
+            <button class="close-modal" onclick="closeModal('stats-modal')">&times;</button>
+            
+            <!-- NEW: NAME EDITOR FOR EXISTING USERS -->
+            <div style="margin-bottom: 20px; width: 100%; border-bottom: 1px solid var(--border-color); padding-bottom: 15px;">
+                <label style="font-size: 0.8rem; font-weight:bold; text-transform:uppercase;">Player Name</label>
+                <div style="display:flex; gap: 5px; margin-top: 5px;">
+                    <input type="text" id="player-name-input" placeholder="Enter Name" maxlength="12" 
+                           style="flex-grow:1; padding: 8px; border: 2px solid var(--border-color); border-radius: 4px; font-weight: bold; color: var(--text-color); background: var(--bg-color);">
+                    <button onclick="savePlayerName()" class="play-btn" style="padding: 8px 15px; min-width: auto; font-size: 0.8rem; margin:0;">SAVE</button>
+                </div>
+            </div>
+            <!-- ----------------------------------- -->
+
+            <h2>STATISTICS</h2>
+            
+            <div id="stats-loading" class="loading-spinner" style="display:none; margin: 20px auto;"></div>
+
+            <div class="stat-row">
+                <div class="stat-box">
+                    <span id="stat-played" class="stat-val">0</span>
+                    <span class="stat-label">Played</span>
+                </div>
+                <div class="stat-box">
+                    <span id="stat-win-pct" class="stat-val">0</span>
+                    <span class="stat-label">Win %</span>
+                </div>
+                <div class="stat-box">
+                    <span id="stat-current-streak" class="stat-val">0</span>
+                    <span class="stat-label">Streak</span>
+                </div>
+                <div class="stat-box">
+                    <span id="stat-max-streak" class="stat-val">0</span>
+                    <span class="stat-label">Max</span>
+                </div>
+            </div>
+
+            <h3 class="graph-title">GUESS DISTRIBUTION</h3>
+            <div class="graph-container" id="guess-distribution">
+                </div>
+        </div>
+    </div>
+
+<script type="module">
+    // --- Data ---
+    const WORD_LENGTH = 6;
+    const MAX_GUESSES = 6;
+    const GAME_EPOCH = new Date("2024-01-01T00:00:00"); // Base date for daily puzzle
+    
+    // Extended Word Data
+    const WORD_DATA = [
+        { word: "ABANTE", def: "Ginagamit kapag may isang tao, bagay, o ideya na mas ahead, may lamang, o nasa mas mataas na antas." },
+        { word: "AGIMAT", def: "Isang bagay na pinaniniwalaang may kapangyarihang mahika o supernatural." },
+        { word: "ALAALA", def: "Gunita o memorya ng nakaraan." },
+        { word: "ALAMAT", def: "Kuwento tungkol sa pinagmulan ng mga bagay-bagay." },
+        { word: "BAYANI", def: "Taong may pambihirang tapang at naglilingkod sa bayan." },
+        { word: "BITUIN", def: "Bagay sa kalangitan na nagniningning tuwing gabi." },
+        { word: "KALAYA", def: "Ang estado ng pagiging malaya." },
+        { word: "BAGSAK", def: "Pagkahulog mula sa mataas na lugar o pagkabigo." },
+        { word: "BALITA", def: "Impormasyon tungkol sa mga pangyayari." },
+        { word: "DALAGA", def: "Babaeng wala pang asawa." },
+        { word: "HANDOG", def: "Bagay na ibinigay nang kusa o regalo." },
+        { word: "HANGIN", def: "Ang hangin na ating hinihinga o nararamdaman." },
+        { word: "LAGNAT", def: "Sakit na may mataas na temperatura." },
+        { word: "SALITA", def: "Yunit ng wika na may kahulugan." }
+    ];
+
+    const VALID_GUESSES = [
+        "ABANTE", "AGIMAT", "ALAALA", "ALAMAT", "ALAMIN", "ALISIN", "APIHIN", "AQUINO",
+        "BABABA", "BAGSAK", "BAKAL", "BALAT", "BALING", "BALITA", "BATO", "BAYANI", "BILIS", "BIGYAN", "BINUYO", "BITUIN", "BUKAYO", "BUMASA", "BUKSAN", 
+        "DALAGA", "DALIRI", "DAANAN", "DAMHIN", "DATING", "DIBDIB", 
+        "EKISAN", "EKSENA",
+        "GALANG", 
+        "HAGDAN", "HALAGA", "HALATA", "HANDOG", "HANGAD", "HANGAL", "HANGIN", "HIBANG", "HILERA", "HILING", "HULING", "HUDYAT",
+        "KAPWA", "KALYE", "ABANTE", "KANAN", "KALIWA", "BABABA", "AALIS", "DATING",
+        "SAHING", "BATO", "TUBIG", "BAKAL", "MALAKI", "BUKSAN", "TANONG", "DIBDIB", "PANGIT", "MABAIT", "MASAMA", "BILIS",
+        "IBABAW", "IBAGAY", "IBALIK", "IDAWIT", "IDIKIT", "IGAPOS", "IKALAT", "IKALAW", "IKALIMA", "IKANIM", "IKAPAT", "IKATLO",
+        "ILAGAY", "ILAGDA", "ILAWAN", "IMIKAN", "INUMAN", "IWANAN",
+        "KAINAN", "KALIWA", "KALYE", "KAMUSTA", "KANAN", "KAPWA", "KUMAIN", "KUMUHA", "KUSINA", "KWARTO", 
+        "LABADA", "LABONG", "LAKBAY", "LAMANG", "LAMPAS", "LANDAS", "LAGNAT", "LIBANG", "LUMABO", "LUMAGO", "LUMAKI", "LUMINGA",
+        "MABAIT", "MABINI", "MAHAL", "MAHIYA", "MALAKI", "MANILA", "MANGGA", "MARAMI", "MASAMA", "MATINO", "MATULI", "MASAMA", "MASAYA",
+        "NGIPIN",
+        "OBLONG",
+        "PAALAM", "PANCIT", "PANGIT", "PANGET", "PANALO", "PANSIN", "PANSIT", "PINTOR", "PRUTAS",
+        "SAHING", "SAGING", "SALAMAT", "SALITA", "SILANG", "SIMULA", "SINDAK", "SINING", "SULONG", "SUMITA", "SURIIN", "SINAG",
+        "TANONG", "TAPANG", "TIWALA", "TIYAGA", "TINOLA", "TUKLAS", "TULONG", "TUMAWA",
+        "UMAWIT", "UMIBIG",  "UMINOM", "UMIWAS", "UMIYAK", "UMPISA", "UMULAN", "UMUSAD", "UMALIS"
+    ];
+
+    // --- State ---
+    let secretWord = "";
+    let secretDef = "";
+    let currentGuess = "";
+    let guesses = []; 
+    let isGameOver = false;
+    let loading = true;
+    let cachedStats = null;
+    
+    let hintCount = 0;
+    const MAX_HINTS = 3;
+
+    // --- DOM Elements ---
+    const gridEl = document.getElementById("grid");
+    const keyboardEl = document.getElementById("keyboard");
+    const messageContainer = document.getElementById("message-container");
+    const modal = document.getElementById("modal");
+    const modalTitle = document.getElementById("modal-title");
+    const modalMessage = document.getElementById("modal-message");
+    const statsModal = document.getElementById("stats-modal");
+    const themeToggle = document.getElementById("checkbox");
+    const modeBadge = document.getElementById("mode-indicator");
+    const loadingOverlay = document.getElementById("loading-overlay");
+
+    // --- Initialization ---
+    function initGame() {
+        currentGuess = "";
+        isGameOver = false;
+        
+        const todayIndex = getDailyIndex();
+        const dailyEntry = WORD_DATA[todayIndex % WORD_DATA.length];
+        secretWord = dailyEntry.word;
+        secretDef = dailyEntry.def;
+        modeBadge.textContent = "Daily";
+
+        modal.style.display = "none";
+        buildGrid();
+        buildKeyboard(); 
+        updateHintBadge(); // Init badge
+
+        const storedTheme = localStorage.getItem('theme') || 'light';
+        document.documentElement.setAttribute('data-theme', storedTheme);
+        themeToggle.checked = storedTheme === 'dark';
+    }
+
+    function getDailyIndex() {
+        const msPerDay = 86400000;
+        const now = new Date();
+        const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+        const diff = today - GAME_EPOCH;
+        return Math.floor(diff / msPerDay);
+    }
+
+    // --- FIREBASE SYNC LOGIC ---
+    async function syncGameState() {
+        if (!window.currentUser) return;
+        
+        const todayIndex = getDailyIndex();
+        const { doc, getDoc } = window.firestoreFunctions;
+        const gameRef = doc(window.db, 'artifacts', window.appId, 'users', window.currentUser.uid, 'dailyGames', todayIndex.toString());
+        
+        try {
+            const snapshot = await getDoc(gameRef);
+            
+            if (snapshot.exists()) {
+                const data = snapshot.data();
+                console.log("Found cloud game state, loading...");
+                guesses = data.guesses || [];
+                isGameOver = data.isGameOver || false;
+                
+                // Load saved hint count
+                hintCount = data.hintCount || 0; 
+            } else {
+                console.log("No cloud game state found. New game.");
+                guesses = [];
+                isGameOver = false;
+                currentGuess = "";
+                hintCount = 0; // Reset for new game
+            }
+            
+            updateHintBadge(); // Update badge after loading
+            restoreFullGameState();
+            
+        } catch (e) {
+            console.error("Error syncing game state:", e);
+        } finally {
+            loading = false;
+            loadingOverlay.style.display = 'none';
+        }
+    }
+
+    function restoreFullGameState() {
+        clearGridUI();
+        buildKeyboard(); // Reset keyboard colors
+        document.getElementById("modal").style.display = "none";
+
+        if (guesses.length > 0) {
+            guesses.forEach(g => restoreRow(g));
+        }
+        
+        if (isGameOver) {
+            setTimeout(() => showEndScreen(guesses[guesses.length-1] === secretWord), 500);
+        }
+    }
+
+    async function saveGameStateToCloud() {
+        if (!window.currentUser) return;
+        
+        const todayIndex = getDailyIndex();
+        const { doc, setDoc } = window.firestoreFunctions;
+        const gameRef = doc(window.db, 'artifacts', window.appId, 'users', window.currentUser.uid, 'dailyGames', todayIndex.toString());
+        
+        try {
+            await setDoc(gameRef, {
+                guesses: guesses,
+                isGameOver: isGameOver,
+                hintCount: hintCount,
+                lastUpdated: new Date()
+            }, { merge: true });
+        } catch (e) {
+            console.error("Error saving game state to cloud:", e);
+        }
+    }
+
+    window.addEventListener('userReady', syncGameState);
+
+    // --- UI Building ---
+    function buildGrid() {
+        gridEl.innerHTML = "";
+        for (let i = 0; i < MAX_GUESSES; i++) {
+            const row = document.createElement("div");
+            row.className = "row";
+            for (let j = 0; j < WORD_LENGTH; j++) {
+                const tile = document.createElement("div");
+                tile.className = "tile";
+                tile.id = `tile-${i}-${j}`;
+                row.appendChild(tile);
+            }
+            gridEl.appendChild(row);
+        }
+    }
+
+    function clearGridUI() {
+        const tiles = document.querySelectorAll('.tile');
+        tiles.forEach(t => {
+            t.textContent = "";
+            t.removeAttribute("data-state");
+            t.classList.remove("flip");
+        });
+    }
+
+    function buildKeyboard() {
+        keyboardEl.innerHTML = "";
+        const layout = [
+            "QWERTYUIOP",
+            "ASDFGHJKL",
+            "ZXCVBNM"
+        ];
+        
+        layout.forEach((rowKeys, rowIndex) => {
+            const rowEl = document.createElement("div");
+            rowEl.className = "key-row";
+            
+            if (rowIndex === 2) {
+                const enterKey = createKey("ENTER");
+                enterKey.classList.add("key-wide");
+                rowEl.appendChild(enterKey);
+            }
+
+            for (let char of rowKeys) {
+                rowEl.appendChild(createKey(char));
+            }
+
+            if (rowIndex === 2) {
+                const backKey = createKey("⌫");
+                backKey.classList.add("key-wide");
+                backKey.onclick = handleDelete; 
+                backKey.setAttribute('data-key', 'BACKSPACE');
+                rowEl.appendChild(backKey);
+            }
+            
+            keyboardEl.appendChild(rowEl);
+        });
+    }
+
+    function createKey(char) {
+        const btn = document.createElement("button");
+        btn.className = "key";
+        btn.textContent = char;
+        btn.setAttribute("data-key", char);
+        btn.onclick = () => handleInput(char === "⌫" ? "BACKSPACE" : char);
+        return btn;
+    }
+
+    // --- Input Handling ---
+    document.addEventListener("keydown", (e) => {
+        if (isGameOver || loading) return;
+        if (document.getElementById("stats-modal").style.display === "flex") return;
+        
+        const key = e.key.toUpperCase();
+        if (key === "ENTER") handleInput("ENTER");
+        else if (key === "BACKSPACE") handleInput("BACKSPACE");
+        else if (/^[A-Z]$/.test(key)) handleInput(key);
+    });
+
+    function handleInput(key) {
+        if (isGameOver || loading) return;
+
+        if (key === "ENTER") {
+            submitGuess();
+        } else if (key === "BACKSPACE") {
+            if (currentGuess.length > 0) {
+                currentGuess = currentGuess.slice(0, -1);
+                updateGrid();
+            }
+        } else {
+            if (currentGuess.length < WORD_LENGTH) {
+                currentGuess += key;
+                updateGrid();
+            }
+        }
+    }
+
+    function handleDelete() {
+        handleInput("BACKSPACE");
+    }
+
+    function updateGrid() {
+        const row = guesses.length;
+        for (let i = 0; i < WORD_LENGTH; i++) {
+            const tile = document.getElementById(`tile-${row}-${i}`);
+            tile.textContent = currentGuess[i] || "";
+            
+            if (currentGuess[i]) {
+                tile.setAttribute("data-state", "filled");
+            } else {
+                tile.removeAttribute("data-state");
+            }
+        }
+    }
+
+    // --- Game Logic ---
+    function submitGuess() {
+        if (currentGuess.length !== WORD_LENGTH) {
+            showMessage("Kulang sa letra!");
+            shakeRow();
+            return;
+        }
+
+        const isValidGuess = VALID_GUESSES.includes(currentGuess) || 
+                             WORD_DATA.some(e => e.word === currentGuess);
+
+        if (!isValidGuess) {
+             showMessage("Wala sa listahan!");
+             shakeRow();
+             return;
+        }
+
+        guesses.push(currentGuess);
+        saveGameStateToCloud();
+        revealResult();
+    }
+
+    function revealResult() {
+        const row = guesses.length - 1;
+        const guess = guesses[row];
+        
+        let checkWord = secretWord.split("");
+        let guessArr = guess.split("");
+        let states = Array(WORD_LENGTH).fill("absent");
+
+        // First pass: Correct
+        for (let i = 0; i < WORD_LENGTH; i++) {
+            if (guessArr[i] === checkWord[i]) {
+                states[i] = "correct";
+                checkWord[i] = null;
+                guessArr[i] = null;
+            }
+        }
+
+        // Second pass: Present
+        for (let i = 0; i < WORD_LENGTH; i++) {
+            if (guessArr[i] && checkWord.includes(guessArr[i])) {
+                states[i] = "present";
+                checkWord[checkWord.indexOf(guessArr[i])] = null;
+            }
+        }
+
+        // Animate tiles
+        for (let i = 0; i < WORD_LENGTH; i++) {
+            setTimeout(() => {
+                const tile = document.getElementById(`tile-${row}-${i}`);
+                tile.classList.add("flip");
+                tile.setAttribute("data-state", states[i]);
+                updateKeyColor(guess[i], states[i]);
+            }, i * 250);
+        }
+
+        setTimeout(() => {
+            if (guess === secretWord) {
+                isGameOver = true;
+                saveGameStateToCloud();
+                handleGameEnd(true);
+            } else if (guesses.length === MAX_GUESSES) {
+                isGameOver = true;
+                saveGameStateToCloud();
+                handleGameEnd(false);
+            } else {
+                currentGuess = "";
+            }
+        }, WORD_LENGTH * 250);
+    }
+
+    async function handleGameEnd(isWin) {
+        showEndScreen(isWin);
+        await saveStatsToFirebase(isWin, guesses.length);
+    }
+
+    function restoreRow(guess) {
+        let checkWord = secretWord.split("");
+        let guessArr = guess.split("");
+        let states = Array(WORD_LENGTH).fill("absent");
+        const row = guesses.indexOf(guess);
+
+        for (let i = 0; i < WORD_LENGTH; i++) {
+            if (guessArr[i] === checkWord[i]) {
+                states[i] = "correct";
+                checkWord[i] = null;
+                guessArr[i] = null;
+            }
+        }
+        for (let i = 0; i < WORD_LENGTH; i++) {
+            if (guessArr[i] && checkWord.includes(guessArr[i])) {
+                states[i] = "present";
+                checkWord[checkWord.indexOf(guessArr[i])] = null;
+            }
+        }
+
+        for (let i = 0; i < WORD_LENGTH; i++) {
+            const tile = document.getElementById(`tile-${row}-${i}`);
+            tile.textContent = guess[i];
+            tile.setAttribute("data-state", states[i]);
+            updateKeyColor(guess[i], states[i]);
+        }
+    }
+
+    function updateKeyColor(char, state) {
+        const keyBtn = document.querySelector(`button[data-key="${char}"]`);
+        if(!keyBtn) return;
+        
+        const currentState = keyBtn.getAttribute("data-state");
+        
+        if (state === 'correct') {
+            keyBtn.setAttribute("data-state", "correct");
+        } else if (state === 'present' && currentState !== 'correct') {
+            keyBtn.setAttribute("data-state", "present");
+        } else if (state === 'absent' && currentState !== 'correct' && currentState !== 'present') {
+            keyBtn.setAttribute("data-state", "absent");
+        }
+    }
+
+    function showEndScreen(isWin) {
+        const title = isWin ? "Panalo!" : "Talo!";
+        let msg = "";
+        
+        if (isWin) {
+            msg = `Ang salita ay: <b>${secretWord}</b><br><br>` +
+                  `Kahulugan:<br>` +
+                  `<i style="color: var(--correct-bg); font-weight:bold;">"${secretDef}"</i>`;
+        } else {
+            msg = `Sayang! Ang tamang salita ay <b>${secretWord}</b>.<br><br>` +
+                  `Kahulugan:<br>` +
+                  `<i>"${secretDef}"</i>`;
+        }
+
+        modalTitle.textContent = title;
+        modalMessage.innerHTML = msg;
+        modal.style.display = "flex";
+    }
+
+    window.closeModal = function(id) {
+        document.getElementById(id).style.display = "none";
+    }
+
+    function updateHintBadge() {
+        const badge = document.getElementById('hint-count-badge');
+        const remaining = Math.max(0, MAX_HINTS - hintCount);
+        if (badge) {
+            // Animation handling
+            if (badge.textContent !== remaining.toString()) {
+                 badge.classList.remove('pulse');
+                 void badge.offsetWidth; // trigger reflow
+                 badge.classList.add('pulse');
+            }
+            
+            badge.textContent = remaining;
+            
+            if (remaining === 0) {
+                badge.classList.add('empty');
+                document.getElementById('hint-btn').style.opacity = '0.5';
+            } else {
+                badge.classList.remove('empty');
+                badge.style.backgroundColor = ''; // Clear inline to let CSS vars work
+                document.getElementById('hint-btn').style.opacity = '1';
+            }
+        }
+    }
+
+    function getHint() {
+        if (isGameOver) return;
+        
+        // --- ADDED LIMIT CHECK ---
+        if (hintCount >= MAX_HINTS) {
+            showMessage(`Naubos na ang iyong hints! (${MAX_HINTS}/${MAX_HINTS})`);
+            return;
+        }
+
+        // --- INCREMENT AND SAVE ---
+        hintCount++;
+        saveGameStateToCloud();
+        updateHintBadge(); // Update badge UI
+
+        // --- HINT 3: DEFINITION ---
+        if (hintCount === MAX_HINTS) {
+            showMessage(`Hint (3/3): Kahulugan - "${secretDef}"`);
+            return;
+        }
+
+        // --- HINT 1 & 2: RANDOM LETTER ---
+        let knownIndices = new Set();
+        guesses.forEach(g => {
+            for(let i=0; i<WORD_LENGTH; i++) {
+                if(g[i] === secretWord[i]) knownIndices.add(i);
+            }
+        });
+
+        let availableIndices = [];
+        for(let i=0; i<WORD_LENGTH; i++) {
+            if(!knownIndices.has(i)) availableIndices.push(i);
+        }
+
+        if (availableIndices.length === 0) {
+            // Fallback (should normally not be reached if game isn't over)
+            showMessage(`Hint (${hintCount}/${MAX_HINTS}): Alam mo na ang lahat ng letra!`);
+            return;
+        }
+
+        const randomIndex = availableIndices[Math.floor(Math.random() * availableIndices.length)];
+        const letter = secretWord[randomIndex];
+        showMessage(`Hint (${hintCount}/${MAX_HINTS}): Ang ika-${randomIndex + 1} na letra ay "${letter}"`);
+    }
+
+    // Expose getHint to window so the HTML button can find it
+    window.getHint = getHint;
+
+    function showMessage(msg) {
+        const toast = document.createElement("div");
+        toast.className = "toast";
+        toast.textContent = msg;
+        messageContainer.prepend(toast);
+        
+        setTimeout(() => {
+            toast.classList.add("fade-out");
+            toast.addEventListener("transitionend", () => toast.remove());
+        }, 3000);
+    }
+    window.showMessage = showMessage;
+
+    function shakeRow() {
+        const row = document.querySelector(`#grid .row:nth-child(${guesses.length + 1})`);
+        if(row) {
+            row.classList.add("shake");
+            row.addEventListener("animationend", () => row.classList.remove("shake"));
+        }
+    }
+
+    themeToggle.addEventListener('change', function(e) {
+        if (e.target.checked) {
+            document.documentElement.setAttribute('data-theme', 'dark');
+            localStorage.setItem('theme', 'dark');
+        } else {
+            document.documentElement.setAttribute('data-theme', 'light');
+            localStorage.setItem('theme', 'light');
+        }
+    });
+
+    // --- FIREBASE STATS LOGIC ---
+    
+    // Default stats structure
+    const DEFAULT_STATS = {
+        played: 0,
+        wins: 0,
+        currentStreak: 0,
+        maxStreak: 0,
+        lastPlayedIndex: -1,
+        lastWonIndex: -1,
+        distribution: { 1:0, 2:0, 3:0, 4:0, 5:0, 6:0 }
+    };
+
+    async function fetchStats() {
+        if (!window.currentUser) return DEFAULT_STATS;
+        if (cachedStats) return cachedStats;
+
+        try {
+            const { doc, getDoc } = window.firestoreFunctions;
+            const statsRef = doc(window.db, 'artifacts', window.appId, 'users', window.currentUser.uid, 'stats', 'daily');
+            const docSnap = await getDoc(statsRef);
+
+            if (docSnap.exists()) {
+                cachedStats = docSnap.data();
+                return cachedStats;
+            } else {
+                return DEFAULT_STATS;
+            }
+        } catch (e) {
+            console.error("Error fetching stats:", e);
+            return DEFAULT_STATS;
+        }
+    }
+
+    async function saveStatsToFirebase(isWin, guessCount) {
+        if (!window.currentUser) return;
+
+        const todayIndex = getDailyIndex();
+        let stats = await fetchStats();
+        
+        if (stats.lastPlayedIndex === todayIndex) return;
+
+        stats.played += 1;
+        
+        if (isWin) {
+            stats.wins += 1;
+            stats.distribution[guessCount] = (stats.distribution[guessCount] || 0) + 1;
+            
+            if (stats.lastWonIndex === todayIndex - 1) {
+                stats.currentStreak += 1;
+            } else {
+                stats.currentStreak = 1;
+            }
+            stats.lastWonIndex = todayIndex;
+
+            if (stats.currentStreak > stats.maxStreak) {
+                stats.maxStreak = stats.currentStreak;
+            }
+        } else {
+            stats.currentStreak = 0;
+        }
+        
+        // --- NEW: UPDATE USERNAME ---
+        // Grab the name from the logged-in user profile
+        if (window.currentUser && window.currentUser.displayName) {
+            stats.username = window.currentUser.displayName;
+        } else if (!stats.username) {
+            // Fallback if they are an old user with no name
+            stats.username = "Player " + window.currentUser.uid.substring(0, 5).toUpperCase();
+        }
+        // ----------------------------
+
+        stats.lastPlayedIndex = todayIndex;
+        cachedStats = stats;
+
+        try {
+            const { doc, setDoc } = window.firestoreFunctions;
+            const statsRef = doc(window.db, 'artifacts', window.appId, 'users', window.currentUser.uid, 'stats', 'daily');
+            // Save the stats (which now includes the username!)
+            await setDoc(statsRef, stats);
+        } catch (e) {
+            console.error("Error saving stats:", e);
+        }
+    }
+
+    // UPDATE: Pre-fill name in stats modal
+    window.openStatsModal = async function() {
+        document.getElementById("stats-modal").style.display = "flex";
+        document.getElementById("modal").style.display = "none";
+        document.getElementById("help-modal").style.display = "none"; // Close help if open
+
+        const loading = document.getElementById("stats-loading");
+        const content = document.querySelectorAll("#stats-modal .stat-box, #stats-modal h3, #guess-distribution");
+        
+        loading.style.display = "block";
+        content.forEach(el => el.style.opacity = "0.3");
+        
+        // Pre-fill name input
+        if (window.currentUser && window.currentUser.displayName) {
+            document.getElementById('player-name-input').value = window.currentUser.displayName;
+        }
+
+        const stats = await fetchStats();
+
+        document.getElementById("stat-played").textContent = stats.played;
+        const winPct = stats.played > 0 ? Math.round((stats.wins / stats.played) * 100) : 0;
+        document.getElementById("stat-win-pct").textContent = winPct;
+        document.getElementById("stat-current-streak").textContent = stats.currentStreak;
+        document.getElementById("stat-max-streak").textContent = stats.maxStreak;
+
+        const distContainer = document.getElementById("guess-distribution");
+        distContainer.innerHTML = "";
+        
+        const values = Object.values(stats.distribution);
+        const maxVal = Math.max(...values, 1);
+        
+        for (let i = 1; i <= MAX_GUESSES; i++) {
+            const count = stats.distribution[i] || 0;
+            const percentage = Math.max((count / maxVal) * 100, 7); 
+            
+            const row = document.createElement("div");
+            row.className = "graph-row";
+            
+            row.innerHTML = `
+                <div class="graph-label">${i}</div>
+                <div class="graph-bar-container">
+                    <div class="graph-bar" style="width: ${percentage}%">${count}</div>
+                </div>
+            `;
+            distContainer.appendChild(row);
+        }
+
+        loading.style.display = "none";
+        content.forEach(el => el.style.opacity = "1");
+    }
+
+    // New Function for Help Modal
+    window.openHelpModal = function() {
+        document.getElementById("help-modal").style.display = "flex";
+        document.getElementById("modal").style.display = "none";
+        document.getElementById("stats-modal").style.display = "none";
+    }
+
+    initGame();
+
+</script>
+</body>
+</html>

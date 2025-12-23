@@ -1,0 +1,294 @@
+<!DOCTYPE html>
+<html lang="tl">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Login - Talahula</title>
+    <style>
+        /* --- KEEPING YOUR EXACT CSS --- */
+        :root {
+            --ph-yellow: #FCD116; --ph-blue: #0038A8; --ph-red: #CE1126; --ph-white: #FFFFFF;
+            --narra-wood: #5D4037; --bamboo-light: #D7CCC8;
+            --bg-color: #fdf6e3; --text-color: #3e2723;
+            --key-bg: #efebe9; --key-text: #3e2723; --border-color: #a1887f;
+            --correct-bg: var(--ph-yellow); --correct-text: #3e2723; 
+            --present-bg: var(--ph-blue); --present-text: #ffffff; 
+            --absent-bg: var(--ph-red); --absent-text: #ffffff; 
+            --modal-bg: rgba(255, 255, 255, 0.98);
+            --shadow: 0 4px 6px rgba(0,0,0,0.2);
+            --btn-bg: var(--ph-blue); 
+        }
+
+        [data-theme="dark"] {
+            --bg-color: #1a2332; --text-color: #e6e6e6;
+            --key-bg: #37474f; --key-text: #eceff1; --border-color: #546e7a;
+            --correct-bg: #FBC02D; --correct-text: #263238; 
+            --present-bg: #4285F4; --present-text: #ffffff;
+            --absent-bg: #D32F2F; --absent-text: #ffffff;
+            --modal-bg: rgba(38, 50, 56, 0.98); --btn-bg: #FBC02D;
+        }
+
+        [data-theme="dark"] body {
+            background-color: var(--bg-color);
+            background-image: radial-gradient(circle at 50% 50%, #263238 2px, transparent 2.5px), linear-gradient(0deg, transparent 49%, #263238 50%, transparent 51%), linear-gradient(90deg, transparent 49%, #263238 50%, transparent 51%);
+            background-size: 30px 30px, 60px 60px, 60px 60px;
+        }
+
+        * { box-sizing: border-box; margin: 0; padding: 0; font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; transition: background-color 0.3s, color 0.3s, border-color 0.3s; }
+
+        body {
+            background-color: #fcf6e6; color: var(--text-color); display: flex; flex-direction: column; align-items: center; height: 100dvh;
+            background-image: linear-gradient(45deg, #e4d5b7 25%, transparent 25%, transparent 75%, #e4d5b7 75%, #e4d5b7), linear-gradient(45deg, #e4d5b7 25%, transparent 25%, transparent 75%, #e4d5b7 75%, #e4d5b7);
+            background-position: 0 0, 10px 10px; background-size: 20px 20px;
+        }   
+
+        header {
+            width: 100%; padding: 10px 20px; display: flex; justify-content: space-between; align-items: center; border-bottom: 5px solid;
+            border-image: linear-gradient(to right, var(--ph-blue) 33%, var(--ph-red) 33%, var(--ph-red) 66%, var(--ph-yellow) 66%) 1;
+            max-width: 600px; background-color: var(--bg-color); z-index: 10;
+        }
+        .header-left { display: flex; align-items: center; gap: 10px; }
+        h1 { font-weight: 900; letter-spacing: 1px; text-transform: uppercase; font-size: 1.6rem; color: var(--text-color); text-shadow: 2px 2px 0px var(--ph-yellow); }
+        [data-theme="dark"] h1 { text-shadow: 2px 2px 0px #000; }
+        .theme-switch { display: inline-block; height: 24px; position: relative; width: 46px; }
+        .theme-switch input { display: none; }
+        .slider { background-color: #ccc; bottom: 0; cursor: pointer; left: 0; position: absolute; right: 0; top: 0; transition: .4s; border-radius: 34px; }
+        .slider:before { background-color: white; bottom: 3px; content: ""; height: 18px; left: 3px; position: absolute; transition: .4s; width: 18px; border-radius: 50%; }
+        input:checked + .slider { background-color: var(--btn-bg); }
+        input:checked + .slider:before { transform: translateX(22px); }
+
+        .main-content {
+            flex-grow: 1; display: flex; justify-content: center; align-items: center; width: 100%; padding: 20px;
+        }
+
+        .auth-card {
+            background-color: var(--modal-bg); color: var(--text-color); padding: 30px; border-radius: 10px;
+            box-shadow: var(--shadow); width: 100%; max-width: 400px; text-align: center;
+            border-top: 5px solid var(--ph-blue); border-bottom: 5px solid var(--ph-red);
+            border-left: 2px solid var(--border-color); border-right: 2px solid var(--border-color);
+        }
+
+        h2 { margin-bottom: 25px; color: var(--ph-blue); text-transform: uppercase; letter-spacing: 1px;}
+        [data-theme="dark"] h2 { color: var(--ph-yellow); }
+
+        input {
+            width: 100%; padding: 15px; margin-bottom: 15px; background-color: var(--key-bg); 
+            border: 2px solid var(--border-color); color: var(--text-color); border-radius: 4px; font-size: 1rem; outline: none;
+        }
+        
+        input:focus { border-color: var(--btn-bg); }
+
+        .btn-submit {
+            background-color: var(--btn-bg); color: white; border: none; padding: 12px 24px; border-radius: 5px;
+            font-size: 1rem; font-weight: bold; cursor: pointer; text-transform: uppercase; width: 100%;
+            margin-top: 10px; box-shadow: 0 3px 6px rgba(0,0,0,0.2);
+        }
+        
+        [data-theme="dark"] .btn-submit { color: #263238; }
+
+        .toggle-text { margin-top: 20px; font-size: 0.9rem; }
+        .toggle-link { color: var(--btn-bg); cursor: pointer; font-weight: bold; text-decoration: underline; }
+        
+        #error-msg {
+            background-color: var(--absent-bg); color: white; padding: 10px; border-radius: 5px;
+            margin-bottom: 15px; display: none; font-weight: bold;
+        }
+    </style>
+</head>
+<body>
+
+    <header>
+        <div class="header-left">
+            <h1>TALAHULA</h1>
+            <span style="font-size: 1.5rem;">🇵🇭</span>
+        </div>
+        <div class="controls">
+            <label class="theme-switch">
+                <input type="checkbox" id="theme-toggle">
+                <span class="slider"></span>
+            </label>
+        </div>
+    </header>
+
+    <div class="main-content">
+        <div class="auth-card">
+            <h2 id="form-title">Mag-login</h2>
+            
+            <div id="error-msg">Maling email.</div>
+
+            <form id="authForm">
+                <!-- NEW USERNAME FIELD (Hidden by default) -->
+                <div id="username-container" style="display:none;">
+                    <input type="text" id="username" placeholder="Username (pangalan sa laro)" maxlength="12">
+                </div>
+
+                <input type="email" id="email" placeholder="Email Address" required autocomplete="email">
+                <input type="password" id="password" placeholder="Password" required>
+                <button type="submit" class="btn-submit" id="submit-btn">PUMASOK</button>
+            </form>
+
+            <div class="toggle-text">
+                <span id="toggle-label">Wala pang account?</span>
+                <span id="toggle-btn" class="toggle-link">Gumawa dito.</span>
+            </div>
+            
+            <div style="margin-top: 20px;">
+                <a href="index.html" style="color: var(--text-color); font-size: 0.8rem; text-decoration: none;">&larr; Bumalik</a>
+            </div>
+        </div>
+    </div>
+
+    <script type="module">
+        // 1. Import Firebase Functions
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/11.0.2/firebase-app.js";
+        import { getAuth, createUserWithEmailAndPassword, signInWithEmailAndPassword, onAuthStateChanged, updateProfile } 
+        from "https://www.gstatic.com/firebasejs/11.0.2/firebase-auth.js";
+
+        // 2. Your Firebase Configuration
+        const firebaseConfig = {
+            apiKey: "AIzaSyBKsGf9_qydnsTxOl1tqEa_cPTExkYCrUY",
+            authDomain: "talahula-4384e.firebaseapp.com",
+            projectId: "talahula-4384e",
+            storageBucket: "talahula-4384e.firebasestorage.app",
+            messagingSenderId: "243686926208",
+            appId: "1:243686926208:web:3c52bbf254a5ea0937c365"
+        };
+        
+        // 3. Initialize Firebase
+        const app = initializeApp(firebaseConfig);
+        const auth = getAuth(app);
+
+        // --- Theme Logic ---
+        const toggleSwitch = document.querySelector('#theme-toggle');
+        const currentTheme = localStorage.getItem('theme');
+        if (currentTheme) {
+            document.documentElement.setAttribute('data-theme', currentTheme === 'dark' ? 'dark' : 'light');
+            if (currentTheme === 'dark') toggleSwitch.checked = true;
+        }
+        toggleSwitch.addEventListener('change', function(e) {
+            if (e.target.checked) {
+                document.documentElement.setAttribute('data-theme', 'dark');
+                localStorage.setItem('theme', 'dark');
+            } else {
+                document.documentElement.setAttribute('data-theme', 'light');
+                localStorage.setItem('theme', 'light');
+            }
+        });
+
+        // --- Auth UI Logic ---
+        let isLoginMode = true;
+        const formTitle = document.getElementById('form-title');
+        const submitBtn = document.getElementById('submit-btn');
+        const toggleLabel = document.getElementById('toggle-label');
+        const toggleBtn = document.getElementById('toggle-btn');
+        const errorMsg = document.getElementById('error-msg');
+        const emailInput = document.getElementById('email');
+        const passwordInput = document.getElementById('password');
+        
+        // NEW: Username elements
+        const usernameContainer = document.getElementById('username-container');
+        const usernameInput = document.getElementById('username');
+
+        // Check if user is already logged in via Firebase
+        onAuthStateChanged(auth, (user) => {
+            if (user) {
+                console.log("User is signed in:", user.email);
+                localStorage.setItem('talahula_current_user', user.email);
+            }
+        });
+
+        // Toggle between Login and Sign Up
+        toggleBtn.addEventListener('click', () => {
+            isLoginMode = !isLoginMode;
+            errorMsg.style.display = 'none';
+            
+            if (isLoginMode) {
+                // LOGIN MODE
+                formTitle.innerText = "Mag-login";
+                submitBtn.innerText = "PUMASOK";
+                toggleLabel.innerText = "Wala pang account?";
+                toggleBtn.innerText = "Gumawa dito.";
+                
+                // Hide Username
+                usernameContainer.style.display = 'none';
+                usernameInput.required = false;
+            } else {
+                // SIGN UP MODE
+                formTitle.innerText = "Gumawa ng Account";
+                submitBtn.innerText = "GUMAWA";
+                toggleLabel.innerText = "May account na?";
+                toggleBtn.innerText = "Mag-login dito.";
+                
+                // Show Username
+                usernameContainer.style.display = 'block';
+                usernameInput.required = true;
+            }
+        });
+
+        // Handle Form Submission
+        document.getElementById('authForm').addEventListener('submit', async function(e) {
+            e.preventDefault();
+            const email = emailInput.value.trim();
+            const password = passwordInput.value.trim();
+            const username = usernameInput.value.trim(); // Get username
+            
+            errorMsg.style.display = 'none'; // Hide previous errors
+            submitBtn.disabled = true;       // Prevent double clicking
+
+            try {
+                if (isLoginMode) {
+                    // --- LOGIN ---
+                    const userCredential = await signInWithEmailAndPassword(auth, email, password);
+                    const user = userCredential.user;
+                    
+                    localStorage.setItem('talahula_current_user', user.email);
+                    
+                    alert(`Maligayang pagbabalik!`);
+                    window.location.href = 'menu.html';
+                } else {
+                    // --- SIGN UP ---
+                    if (!username) throw { code: 'custom/no-username', message: 'Ilagay ang iyong Username.' };
+
+                    // 1. Create User
+                    const userCredential = await createUserWithEmailAndPassword(auth, email, password);
+                    const user = userCredential.user;
+                    
+                    // 2. Save Username to Firebase Profile
+                    await updateProfile(user, {
+                        displayName: username
+                    });
+
+                    localStorage.setItem('talahula_current_user', user.email);
+                    
+                    alert("Account created successfully!");
+                    window.location.href = 'menu.html';
+                }
+            } catch (error) {
+                const errorCode = error.code;
+                const errorMessage = error.message;
+                console.error("Auth Error", errorCode, errorMessage);
+                
+                // Show user-friendly error messages in Tagalog
+                errorMsg.style.display = 'block';
+                
+                if (errorCode === 'custom/no-username') {
+                    errorMsg.innerText = error.message;
+                } else if (errorCode === 'auth/invalid-credential' || errorCode === 'auth/wrong-password' || errorCode === 'auth/user-not-found') {
+                    errorMsg.innerText = "Mali ang email o password.";
+                } else if (errorCode === 'auth/email-already-in-use') {
+                    errorMsg.innerText = "May account na ang email na ito.";
+                } else if (errorCode === 'auth/weak-password') {
+                    errorMsg.innerText = "Masyadong mahina ang password (dapat 6+ characters).";
+                } else if (errorCode === 'auth/invalid-email') {
+                    errorMsg.innerText = "Hindi valid ang format ng email.";
+                } else {
+                    errorMsg.innerText = "May error sa koneksyon. Subukan muli.";
+                }
+            } finally {
+                submitBtn.disabled = false;
+            }
+        });
+    </script>
+
+</body>
+</html>

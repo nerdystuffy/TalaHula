@@ -1,0 +1,438 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="light">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>TalaHula Leaderboard</title>
+    
+    <script type="module">
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/11.0.2/firebase-app.js";
+        import { getFirestore, collectionGroup, query, orderBy, limit, getDocs, where } from "https://www.gstatic.com/firebasejs/11.0.2/firebase-firestore.js";
+
+        // --- CONFIGURATION (Same as Game) ---
+        const firebaseConfig = {
+            apiKey: "AIzaSyBKsGf9_qydnsTxOl1tqEa_cPTExkYCrUY", 
+            authDomain: "talahula-4384e.firebaseapp.com",
+            projectId: "talahula-4384e",
+            storageBucket: "talahula-4384e.firebasestorage.app",
+            messagingSenderId: "243686926208",
+            appId: "1:243686926208:web:3c52bbf254a5ea0937c365"
+        };
+
+        const app = initializeApp(firebaseConfig);
+        const db = getFirestore(app);
+
+        // --- FETCH LEADERBOARD DATA ---
+        async function fetchLeaderboard() {
+            const tbody = document.getElementById('leaderboardBody');
+            tbody.innerHTML = '<tr><td colspan="5" style="text-align:center; padding: 2rem;">Loading data...</td></tr>';
+
+            try {
+                // Query the 'stats' collection across all users
+                // We order by 'currentStreak' descending
+                const q = query(
+                    collectionGroup(db, 'stats'), 
+                    orderBy('currentStreak', 'desc'), 
+                    limit(20)
+                );
+
+                const querySnapshot = await getDocs(q);
+                const leaderboardData = [];
+
+                querySnapshot.forEach((doc) => {
+                    // Filter to ensure we only get the 'daily' stats document
+                    if (doc.id === 'daily') {
+                        const data = doc.data();
+                        leaderboardData.push({
+                            id: doc.ref.parent.parent.id, // The User UID
+                            name: data.username || "Anonymous Player", // Fallback if no name saved
+                            handle: `Streak: ${data.maxStreak || 0}`, // Subtext
+                            score: data.currentStreak || 0,
+                            region: "PH", // Default
+                            avatar: (data.username || "A")[0].toUpperCase(),
+                            isOnline: isRecent(data.lastPlayedIndex) // Check if played today
+                        });
+                    }
+                });
+
+                renderLeaderboard(leaderboardData);
+
+            } catch (error) {
+                console.error("Error fetching leaderboard:", error);
+                // IF INDEX ERROR HAPPENS:
+                if (error.message.includes("requires an index")) {
+                    tbody.innerHTML = '<tr><td colspan="5" style="text-align:center; color:red;">Setup Required: check console for Firebase Index link.</td></tr>';
+                } else {
+                    tbody.innerHTML = '<tr><td colspan="5" style="text-align:center;">Error loading leaderboard.</td></tr>';
+                }
+            }
+        }
+
+        // Helper to check if they played recently (logic based on game epoch)
+        function isRecent(lastIndex) {
+            const GAME_EPOCH = new Date("2024-01-01T00:00:00");
+            const msPerDay = 86400000;
+            const now = new Date();
+            const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+            const todayIndex = Math.floor((today - GAME_EPOCH) / msPerDay);
+            return lastIndex === todayIndex;
+        }
+
+        // --- RENDER FUNCTION ---
+        function renderLeaderboard(data) {
+            const tbody = document.getElementById('leaderboardBody');
+            tbody.innerHTML = ''; 
+
+            if (data.length === 0) {
+                tbody.innerHTML = '<tr><td colspan="5" style="text-align:center;">No streaks found yet!</td></tr>';
+                return;
+            }
+
+            data.forEach((player, index) => {
+                const rank = index + 1;
+                const row = document.createElement('tr');
+                
+                // Status Logic
+                const statusHtml = player.isOnline 
+                    ? `<span class="status-dot"></span> Active` 
+                    : `<span class="status-dot" style="background-color:gray;"></span> Away`;
+
+                row.innerHTML = `
+                    <td class="rank-cell"><span class="rank-badge">${rank}</span></td>
+                    <td>
+                        <div class="user-cell">
+                            <div class="avatar">${player.avatar}</div>
+                            <div>
+                                <div class="username">${player.name}</div>
+                                <div class="user-handle">${player.handle}</div>
+                            </div>
+                        </div>
+                    </td>
+                    <td>${player.region}</td>
+                    <td>${statusHtml}</td>
+                    <td class="score-cell">${player.score.toLocaleString()}</td>
+                `;
+                tbody.appendChild(row);
+            });
+        }
+
+        // --- INIT ---
+        document.addEventListener('DOMContentLoaded', () => {
+            fetchLeaderboard();
+            
+            // Theme Logic
+            const themeToggleBtn = document.getElementById('themeToggle');
+            const htmlElement = document.documentElement;
+            const savedTheme = localStorage.getItem('theme') || 'light';
+            htmlElement.setAttribute('data-theme', savedTheme);
+
+            themeToggleBtn.addEventListener('click', () => {
+                const currentTheme = htmlElement.getAttribute('data-theme');
+                const newTheme = currentTheme === 'light' ? 'dark' : 'light';
+                htmlElement.setAttribute('data-theme', newTheme);
+                localStorage.setItem('theme', newTheme);
+            });
+        });
+    </script>
+
+    <style>
+        :root {
+            --ph-yellow: #FFE97F;
+            --ph-blue:   #4773CC;
+            --ph-red:    #BF4242;
+            --ph-white:  #D2D6D8;
+            --bg-color: #fdf6e3; 
+            --text-color: #3e2723; 
+            --border-color: #a1887f; 
+            --modal-bg: rgba(255, 255, 255, 0.95);
+            --shadow: 0 4px 6px rgba(0,0,0,0.2);
+            --btn-bg: var(--ph-blue);
+            --btn-text: #ffffff;
+            --rank-1-bg: var(--ph-yellow); 
+            --rank-1-text: #3e2723;
+            --rank-2-bg: var(--ph-white);
+            --rank-2-text: #3e2723;
+            --rank-3-bg: var(--ph-red);
+            --rank-3-text: #ffffff;
+            --row-hover: rgba(71, 115, 204, 0.1);
+            --text-secondary: #795548;
+        }
+
+        [data-theme="dark"] {
+            --bg-color: #1a2332; 
+            --text-color: #e6e6e6;
+            --border-color: #546e7a;
+            --modal-bg: rgba(38, 50, 56, 0.95);
+            --btn-bg: #FBC02D;
+            --btn-text: #263238;
+            --rank-1-bg: #FBC02D;
+            --rank-1-text: #263238;
+            --rank-2-bg: #546e7a;
+            --rank-2-text: #ffffff;
+            --rank-3-bg: #D32F2F;
+            --rank-3-text: #ffffff;
+            --row-hover: rgba(255, 255, 255, 0.05);
+            --text-secondary: #b0bec5;
+        }
+
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            transition: background-color 0.3s, color 0.3s, border-color 0.3s;
+        }
+
+        body {
+            background-color: #fcf6e6;
+            color: var(--text-color);
+            display: flex;
+            justify-content: center;
+            padding: 2rem 1rem;
+            min-height: 100vh;
+            background-image: 
+                linear-gradient(45deg, #e4d5b7 25%, transparent 25%, transparent 75%, #e4d5b7 75%, #e4d5b7),
+                linear-gradient(45deg, #e4d5b7 25%, transparent 25%, transparent 75%, #e4d5b7 75%, #e4d5b7);
+            background-position: 0 0, 10px 10px;
+            background-size: 20px 20px;
+        }
+
+        [data-theme="dark"] body {
+            background-color: var(--bg-color);
+            background-image: 
+                radial-gradient(circle at 50% 50%, #263238 2px, transparent 2.5px),
+                linear-gradient(0deg, transparent 49%, #263238 50%, transparent 51%),
+                linear-gradient(90deg, transparent 49%, #263238 50%, transparent 51%);
+            background-size: 30px 30px, 60px 60px, 60px 60px;
+            background-position: 0 0;
+        }
+
+        .container {
+            width: 100%;
+            max-width: 800px;
+            z-index: 1;
+        }
+
+        header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 2rem;
+            background-color: var(--modal-bg);
+            padding: 1.5rem;
+            border-radius: 10px;
+            box-shadow: var(--shadow);
+            border: 2px solid var(--border-color);
+            border-bottom: 5px solid;
+            border-image: linear-gradient(to right, var(--ph-blue) 33%, var(--ph-red) 33%, var(--ph-red) 66%, var(--ph-yellow) 66%) 1;
+        }
+
+        /* Container for Back Button + Title */
+        .header-left {
+            display: flex;
+            align-items: center;
+            gap: 1.5rem;
+        }
+
+        .header-title h1 {
+            font-size: 1.6rem;
+            font-weight: 900;
+            letter-spacing: 1px;
+            text-transform: uppercase;
+            color: var(--text-color);
+        }
+
+        .header-title p {
+            color: var(--text-secondary);
+            font-size: 0.85rem;
+            margin-top: 0.25rem;
+            font-weight: 600;
+            text-transform: uppercase;
+        }
+
+        /* Reusable Style for both Back Button and Theme Toggle */
+        .nav-btn {
+            background: none;
+            border: 2px solid var(--border-color);
+            color: var(--text-color);
+            padding: 0.5rem 1rem;
+            border-radius: 5px;
+            cursor: pointer;
+            font-weight: 700;
+            font-size: 0.8rem;
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+            text-transform: uppercase;
+            text-decoration: none; /* For the link */
+            transition: all 0.2s ease;
+        }
+
+        .nav-btn:hover { background-color: rgba(0,0,0,0.05); }
+        [data-theme="dark"] .nav-btn:hover { background-color: rgba(255,255,255,0.1); }
+
+        .nav-btn svg {
+            width: 1.2rem;
+            height: 1.2rem;
+            fill: none;
+            stroke: currentColor;
+            stroke-width: 2.5;
+            stroke-linecap: round;
+            stroke-linejoin: round;
+        }
+
+        #sunIcon { display: block; }
+        #moonIcon { display: none; }
+        [data-theme="dark"] #sunIcon { display: none; }
+        [data-theme="dark"] #moonIcon { display: block; }
+
+        .leaderboard-card {
+            background-color: var(--modal-bg);
+            border-radius: 10px;
+            box-shadow: var(--shadow);
+            overflow: hidden;
+            border: 2px solid var(--border-color);
+        }
+
+        .table-container { width: 100%; overflow-x: auto; }
+
+        table { width: 100%; border-collapse: collapse; text-align: left; min-width: 600px; }
+
+        th {
+            background-color: rgba(0,0,0,0.03);
+            color: var(--text-secondary);
+            font-weight: 800;
+            font-size: 0.75rem;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+            padding: 1rem 1.5rem;
+            border-bottom: 2px solid var(--border-color);
+        }
+
+        td {
+            padding: 1rem 1.5rem;
+            border-bottom: 1px solid var(--border-color);
+            color: var(--text-color);
+            vertical-align: middle;
+            font-size: 0.95rem;
+            font-weight: 600;
+        }
+
+        tr:last-child td { border-bottom: none; }
+        tr:hover { background-color: var(--row-hover); }
+
+        .rank-cell { font-weight: 700; width: 60px; text-align: center; }
+        .rank-badge {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            width: 36px;
+            height: 36px;
+            border-radius: 8px;
+            font-size: 1rem;
+            font-weight: 900;
+            border: 2px solid transparent;
+        }
+
+        tr:nth-child(1) .rank-badge { background-color: var(--rank-1-bg); color: var(--rank-1-text); animation: pop 0.5s ease; }
+        tr:nth-child(2) .rank-badge { background-color: var(--rank-2-bg); color: var(--rank-2-text); }
+        tr:nth-child(3) .rank-badge { background-color: var(--rank-3-bg); color: var(--rank-3-text); }
+        
+        .user-cell { display: flex; align-items: center; gap: 1rem; }
+
+        .avatar {
+            width: 42px;
+            height: 42px;
+            border-radius: 8px;
+            background-color: var(--border-color);
+            color: white;
+            overflow: hidden;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 1.1rem;
+            font-weight: 800;
+            border: 2px solid var(--border-color);
+        }
+
+        .username { font-weight: 800; font-size: 1rem; }
+        .user-handle { font-size: 0.8rem; color: var(--text-secondary); font-weight: 600; }
+        
+        .score-cell {
+            font-weight: 900;
+            color: var(--btn-bg);
+            text-align: right;
+            font-family: 'Courier New', Courier, monospace;
+            font-size: 1.1rem;
+        }
+        [data-theme="light"] .score-cell { color: var(--ph-blue); }
+
+        .status-dot {
+            height: 10px;
+            width: 10px;
+            background-color: #10b981; 
+            border-radius: 50%;
+            display: inline-block;
+            border: 1px solid rgba(0,0,0,0.1);
+        }
+        @keyframes pop { 0% { transform: scale(1); } 50% { transform: scale(1.2); } 100% { transform: scale(1); } }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <header>
+            <div class="header-left">
+                <!-- NEW BACK BUTTON -->
+                <a href="menu.html" class="nav-btn" aria-label="Back to Menu">
+                    <svg viewBox="0 0 24 24">
+                        <line x1="19" y1="12" x2="5" y2="12"></line>
+                        <polyline points="12 19 5 12 12 5"></polyline>
+                    </svg>
+                    <span>Back</span>
+                </a>
+
+                <div class="header-title">
+                    <h1>TalaHula Ranking</h1>
+                    <p>Top Daily Streaks</p>
+                </div>
+            </div>
+            
+            <button id="themeToggle" class="nav-btn" aria-label="Toggle Dark Mode">
+                <svg id="sunIcon" class="icon" viewBox="0 0 24 24">
+                    <circle cx="12" cy="12" r="5"></circle>
+                    <line x1="12" y1="1" x2="12" y2="3"></line>
+                    <line x1="12" y1="21" x2="12" y2="23"></line>
+                    <line x1="4.22" y1="4.22" x2="5.64" y2="5.64"></line>
+                    <line x1="18.36" y1="18.36" x2="19.78" y2="19.78"></line>
+                    <line x1="1" y1="12" x2="3" y2="12"></line>
+                    <line x1="21" y1="12" x2="23" y2="12"></line>
+                    <line x1="4.22" y1="19.78" x2="5.64" y2="18.36"></line>
+                    <line x1="18.36" y1="5.64" x2="19.78" y2="4.22"></line>
+                </svg>
+                <svg id="moonIcon" class="icon" viewBox="0 0 24 24">
+                    <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"></path>
+                </svg>
+                <span>Theme</span>
+            </button>
+        </header>
+
+        <div class="leaderboard-card">
+            <div class="table-container">
+                <table>
+                    <thead>
+                        <tr>
+                            <th>Rank</th>
+                            <th>Player</th>
+                            <th>Region</th>
+                            <th>Status</th>
+                            <th style="text-align: right;">Streak</th>
+                        </tr>
+                    </thead>
+                    <tbody id="leaderboardBody">
+                        </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+</body>
+</html>
