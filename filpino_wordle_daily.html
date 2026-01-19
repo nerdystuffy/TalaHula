@@ -94,8 +94,16 @@
                 // 2. Update Auth Profile (Secondary - might fail on some networks but that's ok)
                 try {
                     await updateProfile(user, { displayName: newName });
+                    // CRITICAL FIX: Manually update the window object so we don't need to wait for auth listener
+                    if(window.currentUser) window.currentUser.displayName = newName;
                 } catch (authErr) {
                     console.warn("Profile update warning (safe to ignore):", authErr);
+                }
+
+                // 3. CRITICAL FIX: Invalidate Cache in Game Logic
+                // This ensures the next time the game saves (e.g. after winning), it fetches the NEW name
+                if (window.invalidateStatsCache) {
+                    window.invalidateStatsCache();
                 }
 
                 // Success UI
@@ -127,7 +135,7 @@
     <style>
     :root {
         /* --- FILIPINO FLAG PALETTE --- */
-        --ph-yellow: #FFE97F; /* Sun Yellow */
+        --ph-yellow: #f3be12; /* Sun Yellow */
         --ph-blue:   #4773CC; /* Royal Blue */
         --ph-red:    #BF4242; /* Flag Red */
         --ph-white:  #D2D6D8;
@@ -321,6 +329,48 @@
     
     [data-theme="dark"] .icon-btn:hover {
         background-color: rgba(255,255,255,0.1);
+    }
+
+    /* Infinite Mode Button Styling - Simplified (No Gradient) */
+    .infinite-btn {
+        background-color: var(--btn-bg);
+        color: white;
+        border: none;
+        padding: 14px 24px;
+        border-radius: 16px;
+        font-size: 0.9rem;
+        font-weight: 800;
+        cursor: pointer;
+        transition: transform 0.2s, box-shadow 0.2s;
+        box-shadow: 0 4px 6px rgba(0,0,0,0.2);
+        text-transform: uppercase;
+        letter-spacing: 0.8px;
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        text-decoration: none;
+        justify-content: center;
+        border: 2px solid rgba(0,0,0,0.05);
+    }
+    
+    .infinite-btn:hover {
+        transform: translateY(-2px);
+        box-shadow: 0 6px 12px rgba(0,0,0,0.3);
+    }
+    
+    .infinite-btn:active {
+        transform: translateY(0);
+        box-shadow: 0 2px 4px rgba(0,0,0,0.2);
+    }
+    
+    [data-theme="dark"] .infinite-btn {
+        background-color: var(--btn-bg); /* Yellow */
+        color: #3e2723; /* Dark text */
+        box-shadow: 0 4px 6px rgba(0,0,0,0.4);
+    }
+    
+    [data-theme="dark"] .infinite-btn:hover {
+        box-shadow: 0 6px 12px rgba(0,0,0,0.5);
     }
 
     .theme-switch {
@@ -898,6 +948,37 @@
         border-color: rgba(255,255,255,0.1);
         border-top-color: var(--text-color);
     }
+    
+    /* NEW: Banner for Infinite Mode */
+    .infinite-banner {
+        display: none; /* Hidden by default */
+        width: 90%;
+        max-width: 400px;
+        background: linear-gradient(135deg, var(--ph-blue), var(--ph-red));
+        color: white;
+        padding: 12px;
+        border-radius: 8px;
+        text-align: center;
+        font-weight: bold;
+        cursor: pointer;
+        margin-bottom: 10px;
+        box-shadow: 0 4px 6px rgba(0,0,0,0.2);
+        animation: pop 0.3s ease-out;
+        font-size: 0.9rem;
+        z-index: 5;
+        text-transform: uppercase;
+        letter-spacing: 0.5px;
+    }
+    
+    [data-theme="dark"] .infinite-banner {
+        background: linear-gradient(135deg, var(--ph-yellow), var(--ph-red));
+        color: #3e2723;
+    }
+
+    .infinite-banner:hover {
+        transform: translateY(-2px);
+        box-shadow: 0 6px 12px rgba(0,0,0,0.3);
+    }
 </style>
 </head>
 <body>
@@ -945,6 +1026,12 @@
         </div>
     </header>
 
+    <!-- Infinite Mode Button Banner -->
+    <div style="width: 100%; max-width: 600px; padding: 8px 20px; display: flex; justify-content: center; background-color: transparent; z-index: 9;">
+    <button id="infinite-mode-btn" class="infinite-btn" onclick="window.location.href='filipino_wordle.html'" title="Maglaro ng Infinite">
+        ∞ MAG-INFINITE MODE! →
+    </button>
+</div>
     <div id="message-container"></div>
 
     <main id="main-game-area">
@@ -1076,45 +1163,309 @@
     const MAX_GUESSES = 6;
     const GAME_EPOCH = new Date("2024-01-01T00:00:00"); // Base date for daily puzzle
     
-    // Extended Word Data
+    
     const WORD_DATA = [
-        { word: "ABANTE", def: "Ginagamit kapag may isang tao, bagay, o ideya na mas ahead, may lamang, o nasa mas mataas na antas." },
-        { word: "AGIMAT", def: "Isang bagay na pinaniniwalaang may kapangyarihang mahika o supernatural." },
-        { word: "ALAALA", def: "Gunita o memorya ng nakaraan." },
-        { word: "ALAMAT", def: "Kuwento tungkol sa pinagmulan ng mga bagay-bagay." },
-        { word: "BAYANI", def: "Taong may pambihirang tapang at naglilingkod sa bayan." },
-        { word: "BITUIN", def: "Bagay sa kalangitan na nagniningning tuwing gabi." },
-        { word: "KALAYA", def: "Ang estado ng pagiging malaya." },
-        { word: "BAGSAK", def: "Pagkahulog mula sa mataas na lugar o pagkabigo." },
-        { word: "BALITA", def: "Impormasyon tungkol sa mga pangyayari." },
-        { word: "DALAGA", def: "Babaeng wala pang asawa." },
-        { word: "HANDOG", def: "Bagay na ibinigay nang kusa o regalo." },
-        { word: "HANGIN", def: "Ang hangin na ating hinihinga o nararamdaman." },
-        { word: "LAGNAT", def: "Sakit na may mataas na temperatura." },
-        { word: "SALITA", def: "Yunit ng wika na may kahulugan." }
-    ];
+{ word: "AAMUIN", def: "Gagawing maamo o masunurin; papakitunguhan upang maging hindi mailap o mabangis.", origin: "Mula sa salitang-ugat na 'amó', na tumutukoy sa isang taong may kapangyarihan o awtoridad sa iba.", example: "Aamuin ng tagapag-alaga ang leon bago ito ipakita sa publiko." },
+{ word: "AANGAT", def: "Tataas o lilipat paitaas mula sa dating kinalalagyan. Maari ding mangahulugang uunlad o huhusay.", origin: "Mula sa salitang-ugat sa Tagalog na 'angat'", example: "Aangat ang tubig sa ilog kapag patuloy na lumakas ang ulan." },
+{ word: "AATRAS", def: "(1) Kikilos palikod. (2) Pag-urong sa isang pasya o plano.", origin: "Mula sa salitang-ugat na 'atras', na nagmula sa salitang Kastila na 'atrás', na nangangahulugang 'paurong' o 'pabalik.'", example: "Aatrás siya sa kasunduan kapag hindi malinaw ang mga kondisyon." },
+{ word: "ABANTE", def: "(1) Pasulong; patungo sa unahan. (2) Pagsulong o pag-usad ng isang gawain o kilusan.", origin: "Mula sa salitang Kastila na 'avante' / 'adelante', na nangangahulugang pasulong o paunahan.", example: "Abante ang estudyante sa kaniyang proyekto kaya natapos niya ito bago ang itinakdang oras." },
+{ word: "ADHIKA", def: "(1) Layunin o mithiin na nais makamtan. (2) Dahilan ng pagkilos o paninindigan.", origin: "Mula sa Sanskrit na 'adhikāra', na tumutukoy sa karapatan, layunin, o saklaw ng tungkulin; inangkop sa Filipino bilang salitang tumutukoy sa mithiin.", example: "Edukasyon ang adhika niya kaya hindi siya tumitigil sa pag-aaral." },
+{ word: "AGIHAN", def: "(1) Pamamahagi ng anumang bagay sa iba. (2) Bahaging natanggap sa pinaghati-hatian.", origin: "Mula sa salitang-ugat sa Tagalog na 'agí'", example: "May agihan ng pagkain sa pista kaya masaya ang lahat." },
+{ word: "AGIMAT", def: "(1) Bagay na pinaniniwalaang may kapangyarihang mahika. (2) Anting-anting na nagbibigay proteksiyon o lakas.", origin: "Mula sa salitang Malay na 'azimat', na hiniram naman mula sa wikang Arabo na 'azima'.", example: "May agimat ang bata kaya laging ligtas sa mga aksidente." },
+{ word: "ALAALA", def: "(1) Gunita o bakás sa isipan ng nagdaang karanasan. (2) Bagay o pangyayaring hindi malimutan.", origin: "", example: "Masaya ang mga alaala ko ng pista sa baryo." },
+{ word: "ALABOK", def: "Pinong-pino at magaan na mga butil ng lupa o dumi na madaling lumipad o kumalat sa hangin.", origin: "Pinaikling bersyon ng 'alikabok'.", example: "Nahahatsing ako sa alabok tuwing naglilinis ako." },
+{ word: "ALAGAD", def: "Taong tapat na sumusunod o naglilingkod sa isang pinuno, guro, o ideya; disipulo o tagasunod.", origin: "", example: "Itinuring siyang alágad ng Diyos dahil sa kaniyang tapat na paglilingkod sa kapwa." },
+{ word: "ALAHAS", def: "Mga palamuti o ornamentong isinusuot sa katawan tulad ng singsing, kwintas, hikaw, o bracelet.", origin: "Mula sa salitang Kastila na 'alhajas', na hiniram naman mula sa wikang Arabo na 'al-haja' o 'al-hilya'.", example: "Mahilig siya sa mga gintong alahas." },
+{ word: "ALAMAT", def: "(1) Kuwentong bayan na nagpapaliwanag sa pinagmulan ng bagay, lugar, o pangyayari. (2) Tradisyunal na salaysay na may aral.", origin: "", example: "Alam ko ang alamat ng pinya kaya alam ko kung bakit ito may maraming mata." },
+{ word: "ALAMIN", def: "(1) Magsiyasat upang makuha ang kaalaman. (2) Unawain o tuklasin ang katotohanan.", origin: "Mula sa salitang-ugat na Tagalog na 'alam'.", example: "Alamin mo ang sagot bago itaas ang iyong kamay." },
+{ word: "ALARMA", def: "Babala o senyales na nagbibigay-alam sa panganib, oras, o isang mahalagang pangyayari.", origin: "Mula sa salitang Kastila na 'alarma', na hiniram naman mula sa wikang Italyano na 'all’arme'.", example: "Tumunog ang alárma ng bahay nang may pumasok na akyat-bahay." },
+{ word: "ALERTO", def: "Pagiging handa, maingat, at mabilis kumilos sa anumang sitwasyon; mataas na antas ng kamalayan o pagbabantay.", origin: "Mula sa salitang Kastila na 'alerta', na hiniram naman mula sa wikang Italyano na 'all’erta'.", example: "Laging alérto ang guwardiya sa pagbabantay sa pinto ng paaralan." },
+{ word: "ALISIN", def: "(1) Tanggalin o ihiwalay ang isang bagay. (2) Wakasan o ihinto ang isang kalagayan.", origin: "Mula sa salitang-ugat na Tagalog na 'alis'.", example: "Alisin mo ang dumi sa mesa bago kumain." },
+{ word: "ALIPIN", def: "(1) Taong pag-aari at pinaglilingkuran ang amo. (2) Sinumang lubos na napasailalim sa kapangyarihan ng iba.", origin: "", example: "Siya ay alipin ng pag-ibig at tapat sa kaniyang minamahal." },
+{ word: "AMIHAN", def: "Hanging nagmumula sa hilagang-silangan. Karaniwang malamig at tuyo, lalo na sa panahon ng taglamig sa Pilipinas.", origin: "", example: "Dahil sa hanging amíhan, malamig ang simoy ng hangin sa bundok ngayong umaga." },
+{ word: "APIHIN", def: "Ang sadyang pagtrato sa isang tao nang hindi makatarungan; ang abusuhin o tapakan ang karapatan ng iba.", origin: "Mula sa salitang-ugat na Tagalog na 'apí', na tumutukoy sa pagmamaliit o pagmamaltrato.", example: "Apihin ang mga papel at ilagay sa folder nang maayos." },
+{ word: "APUHAP", def: "(1) Maghanap sa pamamagitan ng paghipo, o nang walang malinaw na gabay. (2) Pagsagawa ng kilos nang walang kasiguruhan o nang pakapa-kapa.", origin: "", example: "(1) Ginawa niya ang apuhap upang mahanap ang susi sa madilim na silid. (2) Apuhap niyang tinahak ang daan sa madilim na kagubatan." },
+{ word: "BABAAN", def: "Ipinapagawang mas mababa ang antas, halaga, o dami.", origin: "Mula sa salitang-ugat sa Tagalog na 'babâ'.", example: "Babaan mo naman ang presyo ng iyong mga tinda." },
+{ word: "BABABA", def: "(1) Pupunta sa mas mababang lugar. (2) Maging mas mababa ang antas, halaga, o dami.", origin: "Mula sa salitang-ugat sa Tagalog na 'babâ'.", example: "Bababa ako kapag nailuto na ang pagkain." },
+{ word: "BABAGO", def: "Hindi na tutulad sa dati.", origin: "Mula sa salitang-ugat sa Tagalog na 'bago'.", example: "Maraming babágo sa iskedyul ng klase ngayong semester." },
+{ word: "BAGKUS", def: "Ginagamit upang ipakita ang kabaligtaran o pagsalungat sa isang ideya o pangungusap; sa halip, sa halip na, o sa kabilang dako.", origin: "", example: "Hindi siya natakot sa hamon; bagkús, mas lalo pa siyang nagpakasipag." },
+{ word: "BAGSAK", def: "(1) Malakas at biglaang paghulog mula sa itaas o malaking pagbaba. (2) Hindi pasado, karaniwang tumutukoy sa iskor o grado.", origin: "", example: "Bagsak siya sa pagsusulit kaya kailangan niyang mag-aral nang mabuti para bumawi sa sunod." },
+{ word: "BAGWIS", def: "Panakip o balabal sa likod.", origin: "", example: "Malapad ang bagwis ng ibon habang ito’y lumilipad sa umaga." },
+{ word: "BAKUNA", def: "Gamot o likido na ini-inject o ibinibigay sa katawan upang maiwasan o labanan ang sakit.", origin: "Mula sa salitang Kastila na 'vacuna'.", example: "Kinakailangan ang bakuna laban sa trangkaso tuwing tag-lamig." },
+{ word: "BALIIN", def: "Ipuputol o sisirain ang isang bagay sa pamamagitan ng puwersa.", origin: "Mula sa salitang-ugat sa Tagalog na 'bali'.", example: "Baliin mo ang sanga upang mas madaling dalhin." },
+{ word: "BALING", def: "(1) Ang pagliko, pag-ikot, o paglihis ng isang bagay. (2) May pilas, bitak, o sirâ sa istruktura", origin: "", example: "(1) Baling ang bakal kaya kailangan itong ayusin bago gamitin. (2) Ang baling binti niya ay nakabalot ng gipit para gumaling." },
+{ word: "BALITA", def: "(1) Ulat tungkol sa naganap na pangyayari. (2) Impormasyong ibinabalita sa publiko.", origin: "Mula sa salitang Malay na 'berita', na nagmula sa wikang Sanskrit na 'vartta'.", example: "May bagong balita tungkol sa kaganapan sa bayan." },
+{ word: "BANGAW", def: "Insektong sumisipsip ng dugo ng hayop o tao; malaking langaw.", origin: "", example: "May bangaw sa kusina kaya kailangan nang linisin ang pagkain." },
+{ word: "BANTAY", def: "Ang nagmamasid o nag-aalaga sa isang lugar, tao, hayop, o bagay upang masiguro ang kaligtasan o kaayusan.", origin: "", example: "Bantay ang mga guwardiya sa pinto ng paaralan." },
+{ word: "BASAIN", def: "Gawing basa o lagyan ng tubig o anumang likido.", origin: "Mula sa salitang-ugat sa Tagalog na 'basâ'.", example: "Basain mo ang lupa bago magtanim ng gulay." },
+{ word: "BATLAG", def: "Biglaang pagkatapon o paghulog.", origin: "", example: "May batlag ng bato mula sa taas kaya nag-ingat ang lahat." },
+{ word: "BAYANI", def: "Taong nag-alay ng buhay para sa bayan o sinumang kinikilala dahil sa kabayanihan.", origin: "Mula sa salitang Kapampangan na 'bayani'.", example: "Si Rizal ay ang ating pambansang bayani na ginugol ang buhay para sa bayan." },
+{ word: "BIGYAN", def: "Magkaloob, magpasa, o mag-abot ng isang bagay.", origin: "Mula sa salitang-ugat sa Tagalog na 'bigay'.", example: "Bigyan mo ako ng pera upang makabili ng mga gamit sa paaralan." },
+{ word: "BILANG", def: "(1) Dami, sukat, o numero. (2) Nakapirming dami ng gamit o tao. (3) Kasama o kabilang sa isang pangkat.", origin: "", example: "(1) Bílang ang mga tao rito, kailangan ng sapat na upuan. (2) Limitado ang bilang ng tiket. (3) Biláng estudyante, may tungkulin siyang mag-aral nang mabuti." },
+{ word: "BINABA", def: "(1) Ilinagay sa mas mababang lugar. (2) Naging mas mababa ang antas, halaga, o dami.", origin: "Mula sa salitang-ugat sa Tagalog na 'babâ'.", example: "Bababa siya sa hagdan upang makatulong sa bata." },
+{ word: "BINALI", def: "Pinutol, sinira, o pinaluhod ang isang bagay sa pamamagitan ng puwersa.", origin: "Mula sa salitang-ugat sa Tagalog na 'balì'.", example: "Binali niya ang sanga ng puno upang makuha ang prutas." },
+{ word: "BINAGO", def: "Pagpapalit ng bagay, tao, o sitwasyon upang hindi maitulad sa dati.", origin: "Mula sa salitang-ugat sa Tagalog na 'bago'.", example: "Binago ko ang aking ugali para sa kaniya." },
+{ word: "BINAON", def: "(1) Inilibing o inilagay sa ilalim ng lupa o anumang takip. (2) Nagdala ng bagay upang gamitin sa ibang lugar, karaniwang tumutukoy sa pagkain, pera, o damit.", origin: "Mula sa salitang-ugat sa Tagalog na 'baón' o 'báon'.", example: "(1) Bináon ang bangkay ng alagang aso sa bakuran. (2) Bináon niya ang tinapay sa bag." },
+{ word: "BINASA", def: "(1) Tinapos o sinuri ang nakasulat na teksto. (2) Diniit sa tubig o anumang likido kaya naging basa.", origin: "Mula sa salitang-ugat sa Tagalog na 'basâ' o 'bása'.", example: "(1) Binasa niya ang libro bago matulog kagabi. (2) Binasa ng ulan ang aking sapatos kanina." },
+{ word: "BINATA", def: "Isang lalaking nasa tamang gulang na pang-adulto ngunit hindi pa kasal; kadalasang tumutukoy sa kabataang lalaki.", origin: "", example: "Siya ay isang binatá na masigasig sa kaniyang pag-aaral." },
+{ word: "BINUKA", def: "Inalis ang takip o pinagbukasan.", origin: "Mula sa salitang-ugat sa Tagalog na 'buka', na tumutukoy sa kalagayan ng pagiging bukas o nakaluwag.", example: "Binuka ang pinto upang makapasok ang hangin." },
+{ word: "BINURA", def: "Inalis o tinanggal ang nakasulat, guhit, marka, tala, o alaala.", origin: "Mula sa salitang-ugat sa Tagalog na 'bura'.", example: "Binura niya ang maling sagot sa papel bago ito ipasa." },
+{ word: "BINUYO", def: "Inudyukan o hinikayat ang isang tao.", origin: "Mula sa salitang-ugat sa Tagalog na 'buyo'.", example: "Binuyo niya ang bata na tumulong sa gawaing bahay." },
+{ word: "BITUKA", def: "Organ ng tao o hayop na mahaba at payat na daanan ng pagkain mula sa tiyan patungo sa puwit.", origin: "", example: "Nagkaroon siya ng sakit sa bitúka dahil sa pagkain ng hindi lutong karne." },
+{ word: "BUBUKA", def: "Bubukas o magkaroroon ng hiwa, puwang, o pagitan. Maaari ding tumukoy sa pagbukas ng isang bagay nang kusa o natural.", origin: "Mula sa salitang-ugat sa Tagalog na 'buka'.", example: "Bubuka ang mga bulaklak sa hardin sa pagdating ng umaga." },
+{ word: "BUGBOG", def: "Pisikal na pananakit sa pamamagitan ng suntok, palo, sipa, o iba pang paraan.", origin: "", example: "Bugbóg ang inabot niya matapos awayin ang kaniyang magulang." },
+{ word: "BUKAYO", def: "Matamis na pagkain na gawa sa niyog at asukal.", origin: "", example: "Masarap ang bukayo na gawa sa niyog at asukal." },
+{ word: "BUKSAN", def: "(buksán) Ibuka o tanggalin ang takip o harang.", origin: "Mula sa salitang-ugat sa Tagalog na 'bukas'.", example: "Buksan ang kahon upang makita ang laman nito." },
+{ word: "BUMABA", def: "(1) Pumunta sa mas mababang lugar. (2) Naging mas mababa ang antas, halaga, o dami.", origin: "Mula sa salitang-ugat sa Tagalog na 'babâ'.", example: "Bumaba ang presyo ng gulay dahil sa dami ng ani." },
+{ word: "BUMASA", def: "Tumingin at umunawa ng nakasulat.", origin: "Mula sa salitang-ugat sa Tagalog na 'bása'.", example: "Bumasa siya ng dyaryo bago mag-almusal." },
+{ word: "BUMUKA", def: "Magbukas o magkaroon ng hiwa, puwang, o pagitan. Maaari ding tumukoy sa pagbukas ng isang bagay nang kusa o natural.", origin: "Mula sa salitang-ugat sa Tagalog na 'buka'.", example: "Bumuka ang pinto ng bahay dahil sa malakas na hangin." },
+{ word: "BUNTOT", def: "(1) Huling bahagi ng katawan ng hayop, karaniwang mahaba at manipis. (2) Bagay o tao na laging sumusunod.", origin: "", example: "Ang pusa niya ay may mahaba at malambot na buntot." },
+{ word: "BUSLOT", def: "Butas o siwang, karaniwang sa tela o bagay.", origin: "", example: "May buslot ang damit kaya kailangan itong tahiin." },
+{ word: "BITUIN", def: "(1) Katawang-langit na nagbibigay-liwanag sa gabi. (2) Tanyag na tao. (3) Hugis na may limang patulis na bahagi.", origin: "", example: "(1) Maliwanag ang bituin sa kalangitan kagabi. (2) Siya ay isang bitúin sa larangan ng musika" },
+{ word: "DAANAN", def: "Lugar na dinaraanan.", origin: "Mula sa salitang-ugat na Tagalog na “daan”", example: "Ito ang daanan patungo sa palengke." },
+{ word: "DADAAN", def: "Lalampas o tutuloy sa isang lugar.", origin: "Mula sa salitang-ugat na Tagalog na “daan”", example: "Dadaan siya rito bukas ng umaga." },
+{ word: "DADAKO", def: "Tutungo o pupunta pa lamang sa isang partikular na lugar, direksyon, o paksa.", origin: "Mula sa salitang-ugat na Tagalog na 'dako', na tumutukoy sa isang lugar, direksyon, o lokasyon.", example: "Dadakó ang mga turista sa parke ngayong hapon." },
+{ word: "DAGSIN", def: "Hilabigat, puwersa ng grabidad, bigat ng pagbagsak.", origin: "Mula sa salitang Ilokano na 'dagsen'.", example: "Ramdam ang dagsin ng martilyo nang tumama sa bakal." },
+{ word: "DALAGA", def: "Babaeng nasa hustong gulang ngunit hindi pa kasal.", origin: "", example: "Mabait ang dalaga na tumulong sa mga bata." },
+{ word: "DALIRI", def: "Bahagi ng kamay o paa.", origin: "Mula sa salitang Malay na 'jeriji'.", example: "Masakit ang daliri niya matapos mahulog sa matulis na bagay" },
+{ word: "DANTAY", def: "Pagpapatong ng isang binti o hita sa ibabaw ng isang bagay o tao.", origin: "", example: "Nakaupo siya sa silya, dantáy ang paa sa gilid." },
+{ word: "DAMHIN", def: "Maramdaman sa isip o damdamin.", origin: "", example: "Damhin mo ang saya ng pagtulong sa kapwa." },
+{ word: "DATING", def: "(1) Pagdating o pag-abot sa destinasyon. (2) Pagkakaroon ng impresyon. (3) Nakaraan, dati, o bago.", origin: "", example: "(1) Inaasahan namin ang dating ng mga bisita bago mag tanghali. (2) Ang kaniyang pagpasok ay may dating ng hiwaga. (3) Noong dating araw, madalas tayong maglaro sa kalsada." },
+{ word: "DIBDIB", def: "Harapang bahagi ng katawan ng tao.", origin: "", example: "Masakit ang dibdib niya matapos ang matinding trabaho." },
+{ word: "DIINAN", def: "Idiin o lagyan ng puwersa o bigat.", origin: "Mula sa salitang-ugat sa Tagalog na 'diin'.", example: "Diinan ang takip ng kahon upang hindi ito mabuksan" },
+{ word: "DUMAKO", def: "Pumunta o nagtungo sa isang partikular na lugar, direksyon, o paksa.", origin: "Mula sa salitang-ugat na Tagalog na 'dako', na tumutukoy sa isang lugar, direksyon, o lokasyon.", example: "Dumako siya sa Maynila para magtrabaho." },
+{ word: "EKISAN", def: "Tumutukoy sa pag-alis, pagkansela, o pagbura ng isang bagay, pangalan, plano, o usapan.", origin: "Mula sa salitang Kastila na 'equis', na nangangahulugang marka ng pagkakabura o pagkansela.", example: "Ekisan mo na ang pangalan niya sa listahan." },
+{ word: "EKSENA", def: "(1) Alinmang tagpo sa isang pelikula o dula. (2) Kapaligirang pinangyarihan ng anuman. (3) Pagpapakita ng matinding emosyon sa pampublikong pook (lalo na kung nakahihiya).", origin: "Mula sa salitang Kastila na 'escena'.", example: "Nakakatawa ang eksena sa pelikula." },
+{ word: "GAGAWA", def: "Aksyon o kilos na isasagawa pa lamang, o lilikha ng isang bagay.", origin: "Mula sa salitang-ugat na 'gawâ', na tumutukoy sa paglikha o pagkilos.", example: "Gagawa ako ng adobo bukas." },
+{ word: "GALANG", def: "(1) Kagandahang-asal na ipinakikíta sa kapuwa para sa mataas na pagtingin o pagpapahalaga. (2) Pagkilala sa pagkatao o mga karapatan ng sinuman.", origin: "", example: "May galang siya sa matatanda." },
+{ word: "GALING", def: "(1) Pagbuti ng karamdaman o muling paglakas ng maysakit. (2) Kahusayan sa isang gawain. (3) Pinagmulan o lugar kung saan nagmula ang isang tao, bagay, o pangyayari.", origin: "", example: "Ipinakita niya ang galing sa sayaw." },
+{ word: "GUMAWA", def: "Nailikha na ang bagay.", origin: "Mula sa salitang-ugat na 'gawa', na tumutukoy sa paglikha o pagkilos.", example: "Magaling siya gumawa ng tula." },
+{ word: "GINAWA", def: "Ang aksyon o kilos ay naisagawa o naitapos na, o may nailikha na na bagay.", origin: "Mula sa salitang-ugat na 'gawa', na tumutukoy sa paglikha o pagkilos.", example: "Ginawa niya ang tulang ito." },
+{ word: "HAGDAN", def: "Hakbang o hanay ng panting para sa pag-akyat o pagbaba.", origin: "", example: "Mataas ang hagdan ng bahay." },
+{ word: "HAGWAY", def: "Anyo, hugis, o proporsyon ng isang bagay, tao, o lugar, kadalasang tumutukoy sa pagiging matangkad at balingkinitan.", origin: "", example: "Mahaba ang hagway niya." },
+{ word: "HALAGA", def: "(1) Anumang pakinabang na natatamo sa isang bagay. (2) Presyo ng bilihin.", origin: "", example: "May halaga ang oras." },
+{ word: "HALATA", def: "Madaling makita, mapansin, o mapagmasdan nang hindi na kailangang ipaliwanag.", origin: "", example: "Halata ang kaniyang tuwa sa kaniyang pagngiti." },
+{ word: "HANDOG", def: "Isang bagay, kilos, o alay na ibinibigay bilang regalo, pasasalamat, o parangal.", origin: "", example: "Ang awit ay handog niya para sa kaarawan ng kaibigan." },
+{ word: "HANGAD", def: "Isang matinding nais, mithiin, o layuning pinagsisikapang makamit.", origin: "", example: "Tagumpay ang kaniyang hangad sa buhay." },
+{ word: "HANGAL", def: "Kakulangan sa maayos na pag-iisip, paghatol, o pagpapasya.", origin: "", example: "Hangal ang taong nagtiwala agad sa sinungaling." },
+{ word: "HANGIN", def: "Hindi nakikitang sangkap sa paligid na nalalanghap at nakapagpapalipad ng mga bagay kung malakas.", origin: "", example: "Malakas ang hangin ngayon kaya lumipad ang mga dahon." },
+{ word: "HAPLOS", def: "Banayad o mahinahong paghawak o pagdampi gamit ang kamay o daliri.", origin: "", example: "Mahinahon ang kaniyang haplos sa anak niya." },
+{ word: "HIBANG", def: "(1) Wala sa maayos na pag-iisip. (2) Labis-labis ang pagkakagusto sa anuman o sinuman", origin: "", example: "Ako ay nahihibang sa kaiisip sa iyo." },
+{ word: "HILAGA", def: "Ang panig o direksyon na kabaligtaran ng timog; karaniwang itinuturing bilang itaas sa mapa o compass.", origin: "", example: "Ang Tuguegarao ay matatagpuan sa hilagang bahagi ng Luzon." },
+{ word: "HILERA", def: "Isang sunod-sunod o pantay-pantay na pagkakaayos ng mga tao, bagay, o hayop, na karaniwang nasa linya.", origin: "Mula sa salitang Kastila na 'hilera'.", example: "Pagkakasunod-sunod o pagkakahanay ng anuman." },
+{ word: "HILING", def: "Pakikiusap o pakikisuyo tungkol sa isang bagay na ibig mangyari o makamtan.", origin: "", example: "Ang tangi kong hiling, hanggang dulo ikaw ang kapiling." },
+{ word: "HINUHA", def: "Pagkuha ng, o ang nakuhang konklusyon, ideya, hula, o impormasyon mula sa mga palatandaan o ebidensya.", origin: "", example: "Tama ang kaniyang hinuha tungkol sa pagkawala ng aklat." },
+{ word: "HULING", def: "Ang nasa dulong bahagi, yugto, o pagkakataon. Pangwakas sa pagkakasunod-sunod.", origin: "Mula sa salitang-ugat sa Tagalog na 'huli'.", example: "Siya ang huling dumating sa klase ngayong umaga." },
+{ word: "HUDYAT", def: "Isang senyales, palatandaan, o indikasyon na nagsasaad ng pangyayari, kilos, o pagbabago.", origin: "", example: "Ang pagtaas ng bandila ay hudyat na magsisimula na ang seremonya." },
+{ word: "HUMINA", def: "Bumaba o bumagal ang lakas, dami, o tindi.", origin: "Mula sa salitang-ugat sa Tagalog na 'hina'.", example: "Humíná ang ulan kanina kaya lumabas na ang mga bata sa kanilang mga bahay." },
+{ word: "IBABAW", def: "Pinakaitaas o panlabas na bahagi ng isang bagay", origin: "", example: "Malinis ang ibabaw ng mesa kaya pwede na ilagay ang pagkain." },
+{ word: "IBAGAY", def: "Iayon, ilapat, o iposisyon nang tama ang isang bagay.", origin: "Mula sa salitang-ugat sa Tagalog na 'bagay'.", example: "Ibagay mo ang libro sa tamang estante." },
+{ word: "IBALIK", def: "Ipadala, isauli, o ilagay ang isang bagay sa dati nitong lugar, estado, o posisyon.", origin: "Mula sa salitang-ugat sa Tagalog na 'balik'.", example: "Ibalik mo ang gamit sa lalagyan nito pagkatapos gamitin." },
+{ word: "IBIGAY", def: "Ihandog, ipasa, o ilipat ang pagmamay-ari ng isang bagay sa iba.", origin: "Mula sa salitang-ugat sa Tagalog na 'bigay'.", example: "Ibigay mo ito sa nanay mo kapag nakita mo siya." },
+{ word: "IBIGIN", def: "Mahalin, kasiyahan, o pag-ukulan ng pagmamahal.", origin: "Mula sa salitang-ugat sa Tagalog na 'ibig', na nangangahulugang nais, hilig, o pagmamahal.", example: "Dapat nating ibigin ang ating sariling bayan." },
+{ word: "IBUKAS", def: "Ibuka o tanggalin ang takip o harang.", origin: "Mula sa salitang-ugat sa Tagalog na 'bukas'.", example: "Ibukas mo ang bintana upang pumasok ang hangin." },
+{ word: "IBULSA", def: "Ilagay sa bulsa o itago.", origin: "Mula sa salitang-ugat sa Tagalog na 'bulsa'.", example: "Ibulsa mo na ang pera bago nila makita." },
+{ word: "IBUTOD", def: "Pinakagitna o pinakaloob.", origin: "", example: "Ang huli naming itinalakay ay ang ibutod ng selula." },
+{ word: "IDAWIT", def: "Isama o isali ang isang tao sa isang gawain, usapan, o sitwasyon.", origin: "Mula sa salitang-ugat sa Tagalog na 'dawit'.", example: "Idawít mo ang iyong kapatid sa laro para masaya kayong lahat." },
+{ word: "KABTOL", def: "Kagamitang de-kuryente na ginagamit upang buksan o patayin ang daloy ng kuryente sa isang ilaw o aparato.", origin: "", example: "Pinindot niya ang kabtol upang buksan ang ilaw sa silid." },
+{ word: "KAHATI", def: "Taong may bahagi o kasamang naghahati sa isang bagay", origin: "Mula sa salitang-ugat sa Tagalog na 'hati'.", example: "Siya ang kahati ko sa gastusin sa proyekto." },
+{ word: "KAINAN", def: "Lugar na pinagkakainan o tinutuluyan ng pagkain.", origin: "Mula sa salitang-ugat sa Tagalog na 'kain'.", example: "Nagtipon ang pamilya sa kainan para sa hapunan." },
+{ word: "KAININ", def: "Ipinapagawa ang kilos ng pagkain.", origin: "Mula sa salitang-ugat sa Tagalog na 'kain'.", example: "Kainin mo ang gulay para maging malusog ang iyong katawan." },
+{ word: "KAKAIN", def: "Gaganap o gagawa ng kilos ng pagkain", origin: "Mula sa salitang-ugat sa Tagalog na 'kain'.", example: "Kakain siya kapag natapos niya ang kaniyang proyekto." },
+{ word: "KALIWA", def: "Panig o direksyon na nasa kabilang bahagi ng kanan", origin: "", example: "Pagliko mo ng kalíwa, makikita mo ang simbahan sa dulo ng kalsada." },
+{ word: "KANILA", def: "Panghalip na paari na tumutukoy sa pagmamay-ari ng higit sa isang tao o nilalang", origin: "", example: "Kanila ang lupang tinatayuan ng paaralan." },
+{ word: "KANINA", def: "Tumutukoy sa sandali o oras na lumipas na.", origin: "", example: "Kanína pa siya naghihintay ang aso niya sa harap ng bahay." },
+{ word: "KANINO", def: "Pagtanong kung sino ang may-ari ng o ang tatanggap ng isang bagay.", origin: "", example: "Kanino mo ibinigay ang liham na ito?" },
+{ word: "KATOTO", def: "Matalik na kaibigan, karaniwang ginagamit sa kalalakihan.", origin: "Mula sa salitang-ugat sa Tagalog na 'toto'.", example: "Siya ay nakipaglaro sa kaniyang mga katotó sa bakuran." },
+{ word: "KAWALI", def: "Isang malalim at bilog na kasangkapang panglutuan, karaniwang gawa sa metal, na ginagamit sa pagprito o pagluluto ng pagkain sa mantika o langis.", origin: "", example: "Nilagyan niya ng mantika ang kawali bago iprito ang itlog." },
+{ word: "KINITA", def: "Perang natanggap mula sa isang gawain o trabaho.", origin: "Mula sa salitang-ugat sa Tagalog na 'kita', na tumutukoy sa perang nakuha o nadagdag.", example: "Malaki ang kiníta ko sa pagbenta ng bulaklak ngayong linggo." },
+{ word: "KINUHA", def: "Inagaw, pinulot, o inilagay sa sariling pag-aari o kontrol.", origin: "Mula sa salitang-ugat sa Tagalog na 'kuha'.", example: "Kinuha niya ang payong bago umalis sa bahay." },
+{ word: "KINAIN", def: "Isinagawa ang kilos ng pagkain.", origin: "Mula sa salitang-ugat sa Tagalog na 'kain'.", example: "Kinain ng kapatid ko ang aking mga kendi." },
+{ word: "KUMAIN", def: "Isinagawa ang kilos ng pagkain.", origin: "Mula sa salitang-ugat sa Tagalog na 'kain'.", example: "Kumain muna ako ng almusal bago umalis ng bahay." },
+{ word: "KUMITA", def: "Nadagdagan ang pera mula sa isang gawain o trabaho.", origin: "Mula sa salitang-ugat sa Tagalog na 'kita', na tumutukoy sa perang nakuha o nadagdag.", example: "Kumita siya ng pera mula sa pagtuturo ng sipnayan." },
+{ word: "KUMUHA", def: "Nang-agaw, namulot, o naglagay ng bagay sa sariling pag-aari o kontrol.", origin: "Mula sa salitang-ugat sa Tagalog na 'kuha'.", example: "Kumuha siya ng lapis bago magsimula ang pagsusulat." },
+{ word: "KUSINA", def: "Lugar o silid sa bahay kung saan inihahanda at niluluto ang pagkain.", origin: "Mula sa salitang Kastila na 'cocina', na hiniram mula sa wikang Latin na 'cocina' o 'coquina'.", example: "Nagluto siya ng sinigang sa kusína kaninang umaga." },
+{ word: "LABADA", def: "Nalabhang damit ngunit hindi pa naaalmirulan o naplantsa.", origin: "Mula sa salitang Kastila na 'lavada' na nangangahulugang nilabhan.", example: "Nakasampay pa sa labas ang labada kaya gusot-gusot pa ito. Marami pa akong labada kaya hindi muna ako makakalabas." },
+{ word: "LABONG", def: "Murang suwí ng kawáyan na ginugulay at inaatsara. ", origin: "", example: "Masarap ang ginataang labong na niluto ni lola kaya mabilis itong naubos sa hapag-kainan." },
+{ word: "LAGNAT", def: "Pagkakaroon ng mataas na temperatura, pagbilís ng pulso, atbp. na karaniwang sanhi ng impeksyon sa anumang bahagi ng katawan.", origin: "", example: "Hindi siya pumasok sa paaralan dahil may lagnat siya mula kagabi." },
+{ word: "LAKBAY", def: "Pagtúngo sa malayong pook (lalo na upang makipagsapalaran o makakita ng magagandang tanáwin).", origin: "Mula sa salitang Tagalog na 'lakad' na nangangahulugang paglalakad, nilagyan ng hulaping '-bay' bilang anyong pangngalan.", example: "Plano naming gawin ang isang maikling lakbay sa bundok ngayong bakasyon." },
+{ word: "LALAKI", def: "(1) Kasarian ng tao o hayop na may bayag at uten. Kaapid ng isang babae. (2) Paglawak, pagdami, o paglala ng bagay, hayop, o konsepto sa paglipas ng panahon.", origin: "Mula sa salitang-ugat sa Tagalog na 'laki' na tumutukoy sa dimensyon, lawak, o sukat ng isang bagay.", example: "Ang lalaki sa larawan ay nakasuot ng asul na damit. Lalaki ang problema kung hindi agad ito mareresolba." },
+{ word: "LAMANG", def: "(1) Higit pa o labis kumpara sa iba. (2) Tanging bahagi, o bagay o taong natatangi o naiiba.", origin: "", example: "Masarap ang lamang ng manok sa sopas. Ang natirang tinapay ay para sa akin na lamang." },
+{ word: "LAGPAS", def: "(1) Kahigitan sa inaasahang mangyari. (2) Sumobra o nadaanan na ang isang lugar.", origin: "", example: "(1) Lampas na niya ang itinakdang bilang ng pahina na kailangang basahin. (2) Lampas na sa oras ang pag-inom mo ng gamot." },
+{ word: "LAMPAS", def: "(1) Kahigitan sa sukat, o dami. (2) Nakaraan na o lumabis sa oras o bilang.", origin: "", example: "(1) Lampas na niya ang itinakdang bilang ng pahina na kailangang basahin. (2) Lampas na sa oras ang pag-inom mo ng gamot." },
+{ word: "LANDAS", def: "Daan o rutang dinadaanan patungo sa isang lugar. Direksyon o daloy ng buhay, karera, o desisyon.", origin: "", example: "Maliit ngunit malinaw ang landas patungo sa bundok. Pinili niya ang tamang landas upang makamit ang kaniyang pangarap." },
+{ word: "LANYOS", def: "Lambing o pagpapakita ng matinding pagmamahal sa pamamagitan ng malambot na tinig o kilos. Maaari ding tumukoy sa pagsuyo o pag-amo sa isang tao.", origin: "", example: "Hindi matiis ng ina ang lanyos ng kaniyang anak kaya agad niya itong pinagbigyan sa hiling nito." },
+{ word: "LIBANG", def: "Pag-aaliw sa sarili upang makalimot sa lungkot, pagod, o pagkainip. Pagbaling ng atensyon sa ibang bagay (distraksyon).", origin: "", example: "Nagbabasa muna siya ng libro bilang libang habang naghihintay sa pagdating ng kaniyang kaibigan. Sinubukan niyang libangin ang sarili sa paghahalaman upang hindi na laging maisip ang mga problema sa trabaho." },
+{ word: "LINGID", def: "Hindi alam o hindi batid ng isang tao; nakatago o sekreto.", origin: "", example: "Hindi nanatiling lingid ang katotohanan dahil lumitaw rin ang mga ebidensya pagkalipas ng ilang araw." },
+{ word: "LUMABO", def: "Ang pagiging hindi malinaw ng paningin, paligid, o daloy ng isang likido. Maaari ding tumukoy sa paghina ng ugnayan o pag-asa sa isang bagay.", origin: "Mula sa salitang-ugat sa Tagalog na 'labo' na tumutukoy sa kawalan ng linaw.", example: "Lumabo ang tubig sa baha dahil sa mga dumi at putik na sumama sa agos mula sa kabundukan." },
+{ word: "LUMAGO", def: "Ang pagiging malabay, madamo, o mabilis na pagdami ng dahon at sanga ng halaman. Maaari ding tumukoy sa pag-unlad o pagyabong ng isang negosyo, kabuhayan, o kaalaman.", origin: "Mula sa salitang-ugat sa Tagalog na 'lago', na nangangahulugang paglaki, paglawak, o pag-usbong.", example: "Mabilis na lumago ang mga itinanim naming gulay dahil sa madalas na pag-ulan nitong nakaraang buwan. Inaasahan ng pamilya na lalong lalago ang kanilang munting sari-sari store dahil sa sipag at tiyaga nila." },
+{ word: "LUMAKI", def: "Ang pag-unlad ng sukat, taas, o bigat ng isang tao, hayop, o bagay. Maaari ding tumukoy sa pagtaas ng bilang, halaga, o tindi ng isang sitwasyon.", origin: "Mula sa salitang-ugat sa Tagalog na 'laki' na tumutukoy sa dimensyon, lawak, o sukat ng isang bagay.", example: "Mabilis na lumaki ang bunsong kapatid ni Ana kaya hindi na kasya sa kanya ang mga dati niyang damit. Lumaki ang problema sa trapiko kanina dahil sa nasirang truck sa gitna ng kalsada." },
+{ word: "LUMIIT", def: "Naging mas maliit ang sukat, lawak, dami, o antas.", origin: "Mula sa salitang-ugat sa Tagalog na 'liit'.", example: "Lumiit ang bilang ng mga dumalo dahil sa masamang panahon." },
+{ word: "LUMOBO", def: "Lumaki o umumbok dahil sa hangin, tubig, o laman. Maaari ding tumukoy sa biglaang pagdami o pagtaas.", origin: "Mula sa salitang-ugat sa Tagalog na 'lobo'.", example: "Lumobo ang kaniyang mga utang dahil sa patong-patong na interes." },
+{ word: "MABABA", def: "May maliit na taas, antas, dami, o posisyon.", origin: "Mula sa salitang-ugat sa Tagalog na 'babâ'.", example: "Mababa ang presyo ng isda ngayong araw." },
+{ word: "MABAIT", def: "Nagtataglay ng kabutihan ng loob, maawain, at marunong makisama sa kapwa. Maaari ding tumukoy sa pagiging masunurin o hindi malikot (madalas gamitin sa bata o hayop).", origin: "Mula sa salitang-ugat sa Tagalog na 'bait' na tumutukoy sa katinuan ng isip, kabutihan, o kagandahang-asal.", example: "Napaka-mabait ng ating bagong kapitbahay dahil lagi siyang nagbabahagi ng ulam sa amin." },
+{ word: "MABIGO", def: "Hindi magtagumpay o hindi makamit ang inaasahang layunin, plano, o hangarin; mapurnada.", origin: "Mula sa salitang-ugat sa Tagalog na 'bigo'.", example: "Huwag kang sumuko kahit mabigo ka man muli." },
+{ word: "MABINI", def: "Nagpapakita ng kagandahang-asal, kahinhinan, at pagiging pino sa kilos o pananalita. Madalas gamitin upang ilarawan ang isang babaeng mahinhin o isang taong may disiplina sa sarili.", origin: "Mula sa salitang-ugat sa Tagalog na 'bini' na tumutukoy sa pagiging mahinhin, pino, o may pagtitimpi.", example: "Hinangaan ng lahat ang mabini niyang pagkilos habang siya ay nasa entablado." },
+{ word: "MAHINA", def: "Kulang sa lakas, tindi, o sigla.", origin: "Mula sa salitang-ugat sa Tagalog na 'hina'.", example: "Mahina ang kaniyang boses kaya hindi ko siya maintindihan." },
+{ word: "MAHIYA", def: "Ang makaramdam ng pag-aalinlangan, pagkailang, o pagkapahiya sa harap ng ibang tao. Pagkakaroon ng pakiramdam na tila maliit ang sarili o natatakot mapuna.", origin: "Mula sa salitang-ugat sa Tagalog na 'hiya' na tumutukoy sa damdamin ng paggalang o pagkailang sa kapwa.", example: "Huwag kang mahiya na kumuha ng pagkain dahil espesyal na inihanda iyan para sa inyong mga panauhin." },
+{ word: "MAIKSI", def: "Hindi mahaba sa haba, tagal, o sukat.", origin: "Mula sa salitang-ugat sa Tagalog na 'iksi'.", example: "Maíksi lamang ang kanilang bakasyon kaya mas pinahalagahan nila ang bawat sandali." },
+{ word: "MAIYAK", def: "Magkaroon ng luha o magsimulang umiyak.", origin: "Mula sa salitang-ugat sa Tagalog na 'iyak'.", example: "Ayaw kong pakinggan muli ang kaniyang boses dahil baka maiyak lamang ako." },
+{ word: "MAKITA", def: "Natatanaw o nasasaksihan.", origin: "Mula sa salitang-ugat sa Tagalog na 'kíta'.", example: "Nais ko siyang makita muli." },
+{ word: "MALAKI", def: "Tumutukoy sa sukat o lawak na higit kaysa sa karaniwan. Maaari ding mangahulugang mataas na antas, bilang, o kahalagahan.", origin: "Mula sa salitang-ugat sa Tagalog na 'laki' na tumutukoy sa dimensyon, lawak, o sukat ng isang bagay.", example: "May malaki silang bakuran kung saan pwedeng maglaro ang mga bata ng patintero. Isang malaking karangalan para sa aming pamilya ang iyong pagkapanalo sa paligsahan." },
+{ word: "MALIGO", def: "Paglinis ng katawan gamit ang tubig at sabon, o ibabad ang sarili sa anumang likido.", origin: "Mula sa salitang-ugat sa Tagalog na 'ligo'.", example: "Gusto ko ulit maligo dahil napawis ako sa paglalaro." },
+{ word: "MALIIT", def: "May kakaunti o mababang sukat, dami, o halaga.", origin: "Mula sa salitang-ugat sa Tagalog na 'liit'.", example: "Maliit pa ang aking mga anak." },
+{ word: "MAMULA", def: "Magkakaroon ng kulay na pula.", origin: "Mula sa salitang-ugat sa Tagalog na 'pula'.", example: "Halos mamula na ako sa kakatakbo kanina." },
+{ word: "MANILA", def: "Ang kabisera at sentro ng ekonomiya, pulitika, at kultura ng Pilipinas. Kilala bilang isa sa mga pinakamatandang lungsod sa bansa na matatagpuan sa baybayin ng Look ng Maynila.", origin: "Mula sa pariralang Tagalog na 'May-nila', kung saan ang 'nila' ay tumutukoy sa halamang nilad (isang uri ng bakawan na may puting bulaklak) na dating sagana sa pampang ng Ilog Pasig.", example: "Maraming makasaysayang gusali at pook ang matatagpuan sa loob ng Intramuros sa Manila." },
+{ word: "MANGGA", def: "Isang uri ng prutas na hugis-itlog o hugis-puso, na may dilaw na laman kapag hinog at berde kapag hilaw. Itinuturing na pambansang prutas ng Pilipinas.", origin: "Mula sa salitang Portuges na 'manga', na hiniram naman mula sa wikang Malay na 'mangga', at orihinal na nagmula sa salitang Tamil na 'mankay'.", example: "Masarap isawsaw sa bagoong ang hilaw na mangga lalo na kung ito ay malutong." },
+{ word: "MARAMI", def: "Tumutukoy sa malaking bilang, dami, o kantidad ng tao, bagay, o pangyayari. Higit sa sapat o lampas sa iilan.", origin: "Mula sa salitang-ugat sa Tagalog na 'rami' na nangangahulugang dami o bilang.", example: "Maraming tao ang nag-abang sa pagdating ng sikat na banda sa paliparan." },
+{ word: "MASAMA", def: "Hindi mabuti, nakapipinsala, o laban sa kagandahang-asal at batas. Maaari ding tumukoy sa hindi magandang pakiramdam ng katawan o may sakit.", origin: "Mula sa salitang-ugat sa Tagalog na 'samâ' (mababa ang bigkas) na tumutukoy sa depekto, kapintasan, o kawalan ng kabutihan.", example: "Masama ang loob niya dahil hindi siya nakasama sa outing ng kaniyang mga kaibigan." },
+{ word: "MASAYA", def: "Nagpapakita o nakararamdam ng kagalakan, tuwa, o ligaya. Tumutukoy din sa isang kalagayan o kapaligiran na puno ng sigla at pagdiriwang.", origin: "Mula sa salitang-ugat sa Tagalog na 'saya' na tumutukoy sa damdamin ng kagalakan o lugod.", example: "Napaka-masaya ng aming pamilya noong nagtipon-tipon kami noong nakaraang Pasko." },
+{ word: "MATAAS", def: "May higit na taas o antas kumpara sa karaniwan. Maaaring tumukoy sa sukat, posisyon, ranggo, halaga, o antas.", origin: "Mula sa salitang-ugat sa Tagalog na 'taas'.", example: "Mataas ang marka niya sa pagsusulit dahil masipag siyang mag-aral." },
+{ word: "MATAWA", def: "Maglabas ng tawa o tumugon sa isang bagay na nakakatawa, maaaring kusa o hindi mapigilan.", origin: "Mula sa salitang-ugat sa Tagalog na 'tawa'.", example: "Hindi niya sinadyang matawa nang matisod ang kaniyang kaibigan." },
+{ word: "MATINO", def: "Tumutukoy sa isang tao na may tamang pag-iisip, maayos ang asal, at maaasahan sa mga gawain. Maaari ding mangahulugang maayos, diretso, o walang sira.", origin: "Mula sa salitang-ugat sa Tagalog na 'tino' na nangangahulugang katuwiran, kaayusan, o katalinuhan ng pag-iisip.", example: "Sa kabila ng kaguluhan sa paligid, nanatiling matino ang kaniyang pagpapasya para sa ikabubuti ng lahat." },
+{ word: "MAULAN", def: "Kalagayan ng panahon na may madalas o malakas na pagbuhos ng ulan.", origin: "Mula sa salitang-ugat sa Tagalog na 'ulan'.", example: "Maulan ang panahon ngayon kaya magdala ka ng payong." },
+{ word: "MAUBOS", def: "Tuluyang mawala o magamit ang lahat ng laman, dami, o bilang ng isang bagay", origin: "Mula sa salitang-ugat sa Tagalog na 'ubos'.", example: "Halos maubos niya ang kaniyang baon sa kakabili ng meryenda." },
+{ word: "MIKHAY", def: "Makabagong terminong Tagalog para sa biology o ang pag-aaral tungkol sa mga bagay na may buhay.", origin: "Isang salitang neologism na binuo mula sa pagsasama ng mga salitang 'miktinig' (maliit, sa kontekstong pang-agham) at ang salitang 'buhay'.", example: "Ang paksa namin sa mikhay ngayong araw ay tungkol sa istruktura ng mga cell sa halaman." },
+{ word: "MULHAY", def: "Makabagong terminong Filipino para sa biyolohiyang molekular. Pag-aaral ng mga proseso ng buhay sa antas ng mga molekula, tulad ng DNA at protina.", origin: "Mula sa mga salitang 'mula' (molekular o pinagmulan) at 'buhay'.", example: "Ang mga eksperto sa mulhay ang nanguna sa pagbuo ng mga makabagong bakuna laban sa virus." },
+{ word: "MUNTIK", def: "Malapit nang mangyari ang isang bagay, ngunit hindi ito natuloy.", origin: "", example: "Ngayon ko lang naisip, muntik na kitang minahal." },
+{ word: "NABALI", def: "Aksidenteng naputol o nasira ang isang bagay sa puwersa.", origin: "Mula sa salitang-ugat sa Tagalog na 'bali'.", example: "Nabali ang kaniyang paa matapos siyang madulas sa hagdan." },
+{ word: "NABASA", def: "(1) Nadiit sa tubig o anumang likido kaya naging basa. (2) Naintindihan o natapos na tingnan o basahin ang isang nakasulat na teksto.", origin: "Mula sa salitang-ugat sa Tagalog na 'basâ' o 'bása'.", example: "(1) Nabasa ang aking sapatos dahil sa malakas na ulan kanina. (2) Nabasa ko na ang mensaheng ipinadala mo sa akin kagabi." },
+{ word: "NAKITA", def: "Napagmasdan o napansin ng mga mata; natagpuan ang isang bagay na hinahanap.", origin: "Mula sa salitang-ugat sa Tagalog na 'kita' na tumutukoy sa biswal na persepsyon.", example: "Nakita ko ang nawawala mong pitaka sa ilalim ng kama." },
+{ word: "NAKUHA", def: "Napasakamay ang isang bagay, o naunawaan ang isang konsepto.", origin: "Mula sa salitang-ugat sa Tagalog na 'kuha'.", example: "Nakuha na niya ang kaniyang diploma matapos ang apat na taon ng pag-aaral." },
+{ word: "NALIGO", def: "Naglinis ng katawan gamit ang tubig at sabon, o binabad ang sarili sa anumang likido.", origin: "Mula sa salitang-ugat sa Tagalog na 'ligo'.", example: "Naligo kami sa ulan." },
+{ word: "NALITO", def: "Nakaramdam ng pagkalito o kawalan ng katiyakan sa dapat gawin o piliin.", origin: "Mula sa katutubong salitang Tagalog na 'lito'.", example: "Nalito siya sa dami ng mga direksyon kaya siya naligaw ng daan." },
+{ word: "NALUWA", def: "Nailabas mula sa bibig ang laman nito; nakadura o nasuka.", origin: "Mula sa salitang-ugat sa Tagalog na 'luwa'.", example: "Naluwa niya ang pagkain dahil sa matinding ubo." },
+{ word: "NAMULA", def: "Nagkaroon ng kulay na pula.", origin: "Mula sa salitang-ugat sa Tagalog na 'pula'.", example: "Namula na siya sa kakatawa." },
+{ word: "NARITO", def: "Pagiging nasa lugar na malapit sa nagsasalita. Nagpapahayag ng presensya o lokasyon.", origin: "Mula sa salitang-ugat sa Tagalog na 'rito'.", example: "Narito na ang mga dokumentong kailangan para sa pagpupulong." },
+{ word: "NASAMA", def: "(1) Nakasama o naging bahagi ng isang grupo, lakad, o pangyayari. (2) Naging masama ang kalagayan, asal, o bunga ng isang pangyayari; napahamak.", origin: "Mula sa salitang-ugat sa Tagalog na 'sáma' o 'samâ'.", example: "(1) Nasama siya sa mga napiling mag-aaral para sa paligsahan. (2) Nasama ang plano namin dahil sa biglaang pagbabago ng panahon." },
+{ word: "NASUOT", def: "Nailagay o naisaklob sa katawan ang damit, sapatos, o anumang kasuotan.", origin: "Mula sa salitang-ugat sa Tagalog na 'suot'.", example: "Nasuót niya ang bagong sapatos kahit masikip pa ito." },
+{ word: "NAUTAS", def: "Natapos, nawakasan, o napatay, madalas gamitin sa panitikan para sa pagtatapos ng buhay o isang ugnayan.", origin: "Mula sa salitang-ugat sa Tagalog na 'utas', na nangangahulugang tapos o patay.", example: "Nautas ang kaniyang hininga matapos ang mahabang pakikipaglaban sa sakit." },
+{ word: "NAWALA", def: "Hindi na makita, naglaho, o hindi na matagpuan sa dati nitong kinalalagyan.", origin: "Mula sa katutubong salitang Tagalog na 'wala'.", example: "Biglang nawala ang kaba ko nang makita ko ang aking pamilya sa madla." },
+{ word: "NGIPIN", def: "Ang matitigas na bahagi sa loob ng bibig na ginagamit sa pagnguya ng pagkain.", origin: "Mula sa Proto-Austronesian na '*nipen' na naging 'ngipin' sa Tagalog.", example: "Masakit ang kaniyang ngipin kaya kailangan niyang pumunta sa dentista." },
+{ word: "NILAAN", def: "Itinalaga, rineserba, o ibinigay ang isang bagay para sa isang tao, layunin, o gawain.", origin: "Mula sa salitang-ugat sa Tagalog na 'laan'.", example: "Nilaan niya ang kaniyang mga talento sa pagtulong sa komunidad." },
+{ word: "OBARYO", def: "Bahagi ng sistemang reproduktibo ng babae na gumagawa ng itlog at hormone.", origin: "Mula sa salitang Kastila na 'ovario'.", example: "Ang obaryo ay may mahalagang tungkulin sa kalusugan at reproduktibong kakayahan ng babae." },
+{ word: "OBHETO", def: "Anumang bagay na materyal o natutukoy ng mga pandamdam.", origin: "Mula sa salitang Kastila na 'objeto'.", example: "Hinawakan ni Maria nang maingat ang obheto na itinuro ng guro." },
+{ word: "PAALAM", def: "Pahayag ng paghihiwalay o pamamaalam.", origin: "Mula sa salitang-ugat sa Tagalog na 'alam'.", example: "Nagbigay siya ng paalam sa kaniyang mga guro bilang tanda ng paggalang at pasasalamat." },
+{ word: "PABABA", def: "Patungo sa mas mababang posisyon, dami, o antas.", origin: "Mula sa salitang-ugat sa Tagalog na 'babâ'.", example: "Pababa nang pababa na naman ang iyong mga marka." },
+{ word: "PAKPAK", def: "Bahagi ng katawan ng ibon, insekto, o iba pang hayop na ginagamit sa paglipad o paggalaw sa hangin.", origin: "", example: "Kung may mga pakpak lang sana ako, lumipad na ako papunta sa iyo." },
+{ word: "PANALI", def: "Bagay na ginagamit upang maitali o pagdugtungin ang mga bagay.", origin: "Pinaikling bersyon ng 'pang-tali'.", example: "Naputol ang panáli ng bangka kaya inanod ito ng alon." },
+{ word: "PANALO", def: "Nagtagumpay sa isang laban o gawain.", origin: "", example: "Panalo ang proyekto sapagkat tumugon ito sa tunay na pangangailangan ng komunidad." },
+{ word: "PANSIT/PANCIT", def: "Pagkaing gawa sa bihon o pansit na may sahog.", origin: "Mula sa salitang Hokkien na 'pan-sit' o 'pian e sit'.", example: "Inihanda ang pansit sa handaan bilang sagisag ng mahabang buhay at patuloy na biyaya." },
+{ word: "PANGIT/PANGET", def: "Hindi kaaya-ayang tingnan.", origin: "", example: "Hindi dapat husgahan ang isang tao bilang pangit batay lamang sa anyo, sapagkat higit na mahalaga ang kaniyang asal." },
+{ word: "PANSIN", def: "Pagbibigay-tuon o atensyon.", origin: "", example: "Nakuha ng pananaliksik ang pansin ng mga eksperto dahil sa lalim ng pagsusuri nito." },
+{ word: "PANTIG", def: "Yunit ng pagbigkas sa pagsasalita.", origin: "", example: "Ang salitang Pilipinas ay may apat na pantig: Pi-li-pi-nas." },
+{ word: "PINASA", def: "(1) Ibinigay o ipinadala sa iba. (2) Nagbigay ng pasadong marka.", origin: "Mula sa salitang-ugat sa Tagalog na 'pása'.", example: "(1) Kahapon ko pa pinasa ang aking proyekto. (2) Hindi ko siya pinasa dahil sa masama niyang ugali." },
+{ word: "PINTOR", def: "Taong gumuguhit o nagpipintura.", origin: "Mula sa salitang Latin na 'pinctor' o 'pictor'.", example: "Ginamit ng pintor ang kaniyang likha upang ilarawan ang kalagayan ng lipunang kaniyang ginagalawan." },
+{ word: "PRUTAS", def: "Bunga ng halaman na karaniwang kinakain.", origin: "Mula sa salitang Kastila na 'frutas'.", example: "Ang regular na pagkain ng prutas ay mahalaga sa pagpapanatili ng mabuting kalusugan." },
+{ word: "SAKUNA", def: "Malubhang pangyayari o kalamidad na nagdudulot ng pinsala, kapahamakan, o perwisyo.", origin: "Mula sa salitang Sanskrit na 'sakuna'.", example: "Kailangan nating maghanda para sa anumang darating na sakuna." },
+{ word: "SALITA", def: "Pinakamaliit na yunit ng wika na may kahulugan.", origin: "Mula sa salitang Malay na 'cerita', na mula sa wikang Sanskrit na 'carita'.", example: "Ang wastong paggamit ng salita ay mahalaga sa malinaw at epektibong komunikasyon. " },
+{ word: "SASARA", def: "Matatakpan o mahaharangan ng takip ang anumang nakabukas.", origin: "Mula sa salitang-ugat sa Tagalog na 'sara', na mula sa wikang Kastila na 'cerrar', na mula sa salitang Latin na 'serrare'.", example: "Sasara na ang pintuan ng simbahan pagkatapos ng misa." },
+{ word: "SINARA", def: "Kusang tinakpan o hinarangan ng takip ang anumang nakabukas.", origin: "Mula sa salitang-ugat sa Tagalog na 'sara', na mula sa wikang Kastila na 'cerrar', na mula sa salitang Latin na 'serrare'.", example: "Sinara ko agad ang pinto pagpasok sa bahay." },
+{ word: "SINING", def: "Malikhaing pagpapahayag ng damdamin at ideya.", origin: "", example: "Ang sining ay nagsisilbing salamin ng kultura at kasaysayan ng isang lipunan." },
+{ word: "SUKLAY", def: "Kagamitang may ngipin na ginagamit sa pag-ayos ng buhok.", origin: "", example: "Ginamit niya ang suklay bago pumasok sa paaralan. " },
+{ word: "SUNDAN", def: "Gawin ang kilos ng pagsunod o paghabol.", origin: "Mula sa salitang-ugat sa Tagalog na 'sunod'.", example: "Sundan mo ang iyong kapatid para masigurado ang kaniyang kaligtasan." },
+{ word: "SUNDIN", def: "Gawin o tuparin ang utos, alituntunin, tagubilin, o payo", origin: "Mula sa salitang-ugat sa Tagalog na 'sunod'.", example: "Sundin mo ang payo ng iyong mga magulang." },
+{ word: "TAGLAY", def: "Mayroong katangian o kakayahan.", origin: "", example: "Mayroon siyang taglay na talino at sipag na nakakamangha." },
+{ word: "TALAAN", def: "Listahan o rekord ng mga bagay, pangyayari, o impormasyon.", origin: "Mula sa salitang-ugat sa Tagalog na 'talâ'.", example: "Gumawa siya ng talaan ng mga estudyante sa klase." },
+{ word: "TANONG", def: "Pahayag na humihingi ng kasagutan.", origin: "", example: "Ang bawat tanong sa talakayan ay nagbubukas ng mas malalim na pag-unawa sa paksa." },
+{ word: "TAPANG", def: "Katangian ng pagiging matatag sa harap ng panganib.", origin: "", example: "Ipinamalas ng mamamayan ang tapang sa pagtatanggol ng kanilang karapatan." },
+{ word: "TINAGO", def: "Tinakpan o linagay ang isang bagay upang hindi ito makita.", origin: "Mula sa salitang-ugat sa Tagalog na 'tagò'.", example: "Tinagó niya ang regalo sa ilalim ng kama upang maging sorpresa sa kaarawan." },
+{ word: "TIWALA", def: "Paniniwala sa katapatan at kakayahan ng iba", origin: "Impluwensiyang Espanyol (confianza sa diwa)", example: "Ang tiwala ay pundasyon ng matibay na ugnayan sa loob ng isang komunidad." },
+{ word: "TINOLA", def: "Sabaw na may manok at luya", origin: "", example: "Ang tinola ay karaniwang inihahain bilang simbolo ng pag-aaruga sa pamilya. " },
+{ word: "TULONG", def: "Pagbibigay ng saklolo o suporta", origin: "", example: "Ang tulong na ibinibigay nang bukal sa loob ay nagdudulot ng tunay na pagbabago." },
+{ word: "UBUSAN", def: "Kuhanin, gamitin, o agawan ang lahat ng laman, dami, o bilang ng isang bagay.", origin: "Mula sa salitang-ugat sa Tagalog na 'ubos'.", example: "Agahan mong pumila dahil ubusan na agad ng tickets bukas." },
+{ word: "UBUSIN", def: "Kuhanin o gamitin ang lahat ng laman, dami, o bilang ng isang bagay.", origin: "Mula sa salitang-ugat sa Tagalog na 'ubos'.", example: "Ubusin mo naman ang pagkain mo." },
+{ word: "UMAHON", def: "(1) Umaakyat o lumilitaw mula sa mas mababang lugar patungo sa mas mataas. (2) Bumangon mula sa kahirapan, problema, o masamang kalagayan.", origin: "Mula sa salitang-ugat sa Tagalog na 'ahon', na nangangahulugang pag-akyat o pagbangon.", example: "Unti-unting umahón ang kanilang pamilya mula sa matinding kahirapan sa kanilang sipag at pagtitiyaga." },
+{ word: "UMALIS", def: "Lumisan o magtungo sa ibang lugar.", origin: "Mula sa salitang-ugat sa Tagalog na 'alis'.", example: "Umalis siya sa kanilang lalawigan upang humanap ng mas maayos na kabuhayan." },
+{ word: "UMAWIT", def: "Kumanta o nagpahayag ng damdamin o mensahe sa pamamagitan ng tinig at himig.", origin: "Mula sa salitang-ugat sa Tagalog na 'awit'.", example: "Umawit siya sa harap ng klase bilang bahagi ng kanilang pagtatanghal." },
+{ word: "UMIBIG", def: "Nagmahal o nagkaroon ng pag-ibig.", origin: "Mula sa salitang-ugat sa Tagalog na 'ibig', na nangangahulugang nais, hilig, o pagmamahal.", example: "Natatakot na akong umibig muli." },
+{ word: "UMINOM", def: "Lumagok o nagkonsumo ng inumin, gamot, o anumang likido.", origin: "Mula sa salitang-ugat sa Tagalog na 'inom'.", example: "Uminom agad siya ng gamot nang malaman na nilalagnat siya." },
+{ word: "UMIWAS", def: "Lumihis o lumayo mula sa isang bagay, tao, o sitwasyon.", origin: "Mula sa salitang-ugat sa Tagalog na 'iwas'.", example: "Umiwas siya sa sagupaan ng mga aso sa kanilang bakuran." },
+{ word: "UMIYAK", def: "Maglabas ng luha dahil sa emosyon, sakit, kalungkutan, o tuwa.", origin: "Mula sa salitang-ugat sa Tagalog na 'iyak'.", example: "Umiyak ang bata dahil nawala ang kaniyang paboritong laruan." },
+{ word: "UMPISA", def: "Simula o panimulang bahagi ng isang bagay, gawain, pangyayari, o panahon.", origin: "Mula sa salitang Kastila na 'empezar', na nangangahulugang pagsisimula.", example: "Ako ay tahimik lamang sa umpisa." },
+{ word: "UMULAN", def: "Bumuhos o pumatak ang tubig-ulan mula sa kalangitan.", origin: "Mula sa salitang-ugat sa Tagalog na 'ulan'.", example: "Umulan kagabi kaya basa ang lahat ng halaman sa bakuran." },
+{ word: "UMUSAD", def: "Lumipat ang posisyon patungo sa sunod na pupuntahan, o umayos ang kalagayan pagkatapos ng isang pangyayari.", origin: "Mula sa salitang-ugat sa Tagalog na 'usad', na nangangahulugang galaw na pasulong.", example: "Natutuhan niyang umusad at magsimulang umibig muli." },
+{ word: "UTUSAN", def: "Bigyan ng atas o gawain.", origin: "Mula sa salitang-ugat sa Tagalog na 'utos'.", example: "Ang utusan ng pinuno ay inaasahang tutupad sa gawain nang may pananagutan." },
+{ word: "UUNLAD", def: "Magkakaroon ng pag-angat sa kalagayan, katayuan, kabuhayan, o kakayahan.", origin: "Mula sa salitang-ugat sa Tagalog na 'unlad'.", example: "Uunlad ang kanilang negosyo sa tulong ng bagong estratehiya at sipag ng mga empleyado." },
+];
 
-    const VALID_GUESSES = [
-        "ABANTE", "AGIMAT", "ALAALA", "ALAMAT", "ALAMIN", "ALISIN", "APIHIN", "AQUINO",
-        "BABABA", "BAGSAK", "BAKAL", "BALAT", "BALING", "BALITA", "BATO", "BAYANI", "BILIS", "BIGYAN", "BINUYO", "BITUIN", "BUKAYO", "BUMASA", "BUKSAN", 
-        "DALAGA", "DALIRI", "DAANAN", "DAMHIN", "DATING", "DIBDIB", 
-        "EKISAN", "EKSENA",
-        "GALANG", 
-        "HAGDAN", "HALAGA", "HALATA", "HANDOG", "HANGAD", "HANGAL", "HANGIN", "HIBANG", "HILERA", "HILING", "HULING", "HUDYAT",
-        "KAPWA", "KALYE", "ABANTE", "KANAN", "KALIWA", "BABABA", "AALIS", "DATING",
-        "SAHING", "BATO", "TUBIG", "BAKAL", "MALAKI", "BUKSAN", "TANONG", "DIBDIB", "PANGIT", "MABAIT", "MASAMA", "BILIS",
-        "IBABAW", "IBAGAY", "IBALIK", "IDAWIT", "IDIKIT", "IGAPOS", "IKALAT", "IKALAW", "IKALIMA", "IKANIM", "IKAPAT", "IKATLO",
-        "ILAGAY", "ILAGDA", "ILAWAN", "IMIKAN", "INUMAN", "IWANAN",
-        "KAINAN", "KALIWA", "KALYE", "KAMUSTA", "KANAN", "KAPWA", "KUMAIN", "KUMUHA", "KUSINA", "KWARTO", 
-        "LABADA", "LABONG", "LAKBAY", "LAMANG", "LAMPAS", "LANDAS", "LAGNAT", "LIBANG", "LUMABO", "LUMAGO", "LUMAKI", "LUMINGA",
-        "MABAIT", "MABINI", "MAHAL", "MAHIYA", "MALAKI", "MANILA", "MANGGA", "MARAMI", "MASAMA", "MATINO", "MATULI", "MASAMA", "MASAYA",
-        "NGIPIN",
-        "OBLONG",
-        "PAALAM", "PANCIT", "PANGIT", "PANGET", "PANALO", "PANSIN", "PANSIT", "PINTOR", "PRUTAS",
-        "SAHING", "SAGING", "SALAMAT", "SALITA", "SILANG", "SIMULA", "SINDAK", "SINING", "SULONG", "SUMITA", "SURIIN", "SINAG",
-        "TANONG", "TAPANG", "TIWALA", "TIYAGA", "TINOLA", "TUKLAS", "TULONG", "TUMAWA",
-        "UMAWIT", "UMIBIG",  "UMINOM", "UMIWAS", "UMIYAK", "UMPISA", "UMULAN", "UMUSAD", "UMALIS"
-    ];
+    let VALID_GUESSES = [
+  "AAMUIN", "AANGAT", "AATRAS", "ABANTE", "ADHIKA", "AGIHAN", "AGIMAT", "ALAALA", 
+  "ALABOK", "ALAGAD", "ALAHAS", "ALAMAT", "ALAMIN", "ALARMA", "ALERTO", "ALISIN", 
+  "ALIPIN", "AMIHAN", "APIHIN", "APUHAP",
+  "BABAAN", "BABABA", "BABAGO", "BAGKUS", "BAGSAK", "BAGWIS", "BAKUNA", "BALIIN", 
+  "BALING", "BALITA", "BANGAW", "BANGUS", "BANTAY", "BASAIN", "BATLAG", "BAYANI", 
+  "BIGOTE", "BIGYAN", "BILANG", "BINABA", "BINAGO", "BINALI", "BINAON", "BINASA", 
+  "BINATA", "BINUKA", "BINURA", "BINUYO", "BITUKA", "BITUIN", "BUBUKA", "BUGBOG", 
+  "BUKAYO", "BUKSAN", "BUMABA", "BUMASA", "BUMUKA", "BUNTOT", "BUSLOT",
+  "DAANAN", "DADAAN", "DADAKO", "DAGSIN", "DALAGA", "DALIRI", "DAMHIN", "DANTAY", 
+  "DATING", "DIBDIB", "DIINAN", "DUMAKO",
+  "EKISAN", "EKSENA",
+  "GAGAWA", "GALANG", "GALING", "GINAWA", "GUMAWA",
+  "HAGDAN", "HAGWAY", "HALAGA", "HALATA", "HANDOG", "HANGAD", "HANGAL", "HANGIN", 
+  "HAPLOS", "HIBANG", "HILAGA", "HILERA", "HILING", "HINUHA", "HUDYAT", "HULING", 
+  "HUMINA",
+  "IBABAW", "IBAGAY", "IBALIK", "IBIGAY", "IBIGIN", "IBUKAS", "IBULSA", "IBUTOD", 
+  "IDAWIT", "IDIKIT", "IGAPOS", "IHAGIS", "IKAHON", "IKALAT", "IKANTA", "IKAPAT", 
+  "IKATLO", "IKOPYA", "ILABAS", "ILAGAY", "ILAGDA", "ILAPAG", "ILAPIT", "ILAWAN", 
+  "ILUGAR", "IMIKAN", "INAAMO", "INALAM", "ININOM", "INITAN", "INITIN", "INUBOS", 
+  "INUMAN", "INUMIN", "IPASOK", "ISAULI", "ISAYAW", "ISIGAN", "ISIGAW", "ISUGAL", 
+  "ISUKAT", "ISULAT", "ISUPOT", "ITAPAT", "ITUSOK", "IWANAN",
+  "KABTOL", "KAHATI", "KAINAN", "KAININ", "KAKAIN", "KALIWA", "KANILA", "KANINA", 
+  "KANINO", "KATOTO", "KAWALI", "KINAIN", "KINITA", "KINUHA", "KUMAIN", "KUMITA", 
+  "KUMUHA", "KUSINA",
+  "LABADA", "LABONG", "LAGNAT", "LAGPAS", "LAKBAY", "LALAKI", "LAMANG", "LAMPAS", 
+  "LANDAS", "LANYOS", "LIBANG", "LINGID", "LUMABO", "LUMAGO", "LUMAKI", "LUMAYO", 
+  "LUMIIT", "LUMOBO",
+  "MABAIT", "MABABA", "MABIGO", "MABINI", "MAHINA", "MAHIYA", "MAIKSI", "MAIYAK", 
+  "MAKITA", "MALAKI", "MALIGO", "MALIIT", "MAMULA", "MANGGA", "MANILA", "MARAMI", 
+  "MASAMA", "MASAYA", "MATAAS", "MATAWA", "MATINO", "MAUBOS", "MAULAN", "MIKHAY", 
+  "MULHAY", "MUNTIK",
+  "NABALI", "NABASA", "NABIGO", "NAIYAK", "NAKITA", "NAKUHA", "NALIGO", "NALITO", 
+  "NALUWA", "NAMULA", "NARITO", "NASAMA", "NASUOT", "NATAWA", "NAUBOS", "NAUTAS", 
+  "NAWALA", "NGIPIN", "NILAAN",
+  "OBARYO", "OBHETO",
+  "PAALAM", "PAHINA", "PAIYAK", "PAKPAK", "PAKUHA", "PANALI", "PANALO", "PANCIT", 
+  "PANGET", "PANGIT", "PANSIN", "PANSIT", "PANTIG", "PANUOS", "PATUKA", "PAUBOS", 
+  "PINASA", "PINTOR", "PITAKA", "PRUTAS", "PUNTOS", "PUSONG",
+  "SAGING", "SAHING", "SAKSAK", "SAKUNA", "SAKWIL", "SALAPI", "SALITA", 
+  "SASARA", "SILANG", "SIMULA", "SINAMA", "SINARA", "SINDAK", "SINING", "SINUKA", 
+  "SINUOT", "SUKLAY", "SULONG", "SUMITA", "SUNDAN", "SUNDIN", "SURIIN",
+  "TABLAY", "TADYAK", "TAGLAY", "TAKWIL", "TALAAN", "TALIMA", "TAMAAN", "TANONG", 
+  "TAPANG", "TINAAS", "TINAGO", "TINOLA", "TINURO", "TIWALA", "TIYAGA", "TUKLAS", 
+  "TULIIN", "TULONG", "TUMAWA", "TUMUKA", "TUMULI",
+  "UBUSAN", "UBUSIN", "UMAHON", "UMALIS", "UMAWIT", "UMIBIG", "UMIKSI", "UMINOM", 
+  "UMIWAS", "UMIYAK", "UMPISA", "UMULAN", "UMUSAD", "UNAHIN", "UTUSAN", "UUNLAD"
+];
+async function loadDictionary() {
+    console.log("Fetching dictionary from Firestore...");
+    const { doc, getDoc } = window.firestoreFunctions; 
+    
+    // This points to the collection seen in your screenshot
+    const docRef = doc(window.db, "wordleWords", "sixLetters");
+
+    try {
+        const docSnap = await getDoc(docRef);
+
+        if (docSnap.exists()) {
+            const data = docSnap.data();
+            if (data.words && Array.isArray(data.words)) {
+                // Convert the words from Firestore to UPPERCASE
+                const firestoreWords = data.words.map(w => w.toUpperCase());
+                
+                // Overwrite the existing list with the new one
+                VALID_GUESSES = firestoreWords;
+                
+                console.log(`Dictionary updated! Loaded ${VALID_GUESSES.length} words.`);
+            }
+        } else {
+            console.log("No dictionary document found!");
+        }
+    } catch (error) {
+        console.error("Error getting dictionary:", error);
+    }
+}
+loadDictionary();
 
     // --- State ---
     let secretWord = "";
@@ -1124,6 +1475,12 @@
     let isGameOver = false;
     let loading = true;
     let cachedStats = null;
+    
+    // --- EXPOSE CACHE INVALIDATION FOR SCRIPT 1 ---
+    window.invalidateStatsCache = () => {
+        console.log("Invalidating stats cache to force refresh...");
+        cachedStats = null;
+    };
     
     let hintCount = 0;
     const MAX_HINTS = 3;
@@ -1482,13 +1839,29 @@
         let msg = "";
         
         if (isWin) {
-            msg = `Ang salita ay: <b>${secretWord}</b><br><br>` +
-                  `Kahulugan:<br>` +
-                  `<i style="color: var(--correct-bg); font-weight:bold;">"${secretDef}"</i>`;
+            msg = `Ang salita ay: <b style="color: var(--ph-blue); font-size: 1.3em;">${secretWord}</b><br><br>` +
+                  `<strong style="color: var(--ph-yellow); text-shadow: 1px 1px 2px rgba(0,0,0,0.3);">Kahulugan:</strong><br>` +
+                  `<i style="color: var(--ph-blue); font-weight:600; font-size: 0.95em;">"${secretDef}"</i>`;
         } else {
-            msg = `Sayang! Ang tamang salita ay <b>${secretWord}</b>.<br><br>` +
-                  `Kahulugan:<br>` +
-                  `<i>"${secretDef}"</i>`;
+            msg = `Sayang! Ang tamang salita ay <b style="color: var(--ph-red); font-size: 1.3em;">${secretWord}</b>.<br><br>` +
+                  `<strong style="color: var(--ph-yellow); text-shadow: 1px 1px 2px rgba(0,0,0,0.3);">Kahulugan:</strong><br>` +
+                  `<i style="color: var(--text-color); font-size: 0.95em;">"${secretDef}"</i>`;
+        }
+        
+        // Add origin if available (from WORD_DATA)
+        const todayIndex = getDailyIndex();
+        const dailyEntry = WORD_DATA[todayIndex % WORD_DATA.length];
+        const origin = dailyEntry.origin || "";
+        const example = dailyEntry.example || "";
+        
+        if (origin && origin.trim()) {
+            msg += `<br><br><strong style="color: var(--ph-red); text-shadow: 1px 1px 2px rgba(0,0,0,0.2);">Pinagmulan:</strong><br>` +
+                   `<i style="color: var(--text-color); font-size: 0.9em; opacity: 0.9;">${origin}</i>`;
+        }
+        
+        if (example && example.trim()) {
+            msg += `<br><br><strong style="color: var(--ph-blue); text-shadow: 1px 1px 2px rgba(0,0,0,0.2);">Halimbawa:</strong><br>` +
+                   `<i style="color: var(--text-color); font-size: 0.9em; opacity: 0.9;">"${example}"</i>`;
         }
 
         modalTitle.textContent = title;
@@ -1498,6 +1871,11 @@
 
     window.closeModal = function(id) {
         document.getElementById(id).style.display = "none";
+        // --- NEW: If closing the main modal and game is over, show banner ---
+        if (id === 'modal' && isGameOver) {
+            const banner = document.getElementById('infinite-banner');
+            if (banner) banner.style.display = 'block';
+        }
     }
 
     function updateHintBadge() {
@@ -1616,23 +1994,43 @@
     };
 
     async function fetchStats() {
-        if (!window.currentUser) return DEFAULT_STATS;
+        if (!window.currentUser) {
+            console.log("No user authenticated, returning default stats");
+            return { ...DEFAULT_STATS };
+        }
         if (cachedStats) return cachedStats;
 
         try {
-            const { doc, getDoc } = window.firestoreFunctions;
+            const { doc, getDoc, setDoc } = window.firestoreFunctions;
             const statsRef = doc(window.db, 'artifacts', window.appId, 'users', window.currentUser.uid, 'stats', 'daily');
             const docSnap = await getDoc(statsRef);
 
+            let stats = { ...DEFAULT_STATS };
             if (docSnap.exists()) {
-                cachedStats = docSnap.data();
-                return cachedStats;
-            } else {
-                return DEFAULT_STATS;
+                stats = { ...DEFAULT_STATS, ...docSnap.data() };
             }
+
+            // --- STREAK CORRECTION LOGIC ---
+            const todayIndex = getDailyIndex();
+            // If the last win was BEFORE yesterday (todayIndex - 1), the streak is broken.
+            // Example: Today is 10. Last win was 8. 8 < 9. Streak broken.
+            // If last win was 9. 9 < 9 is false. Streak kept.
+            if (stats.currentStreak > 0 && stats.lastWonIndex < todayIndex - 1) {
+                console.log("Streak broken! Resetting...");
+                stats.currentStreak = 0;
+                
+                // Update DB immediately so leaderboard is accurate
+                setDoc(statsRef, { currentStreak: 0 }, { merge: true }).catch(console.error);
+            }
+            // -------------------------------
+
+            console.log("Stats loaded successfully:", stats);
+            cachedStats = stats;
+            return cachedStats;
+
         } catch (e) {
             console.error("Error fetching stats:", e);
-            return DEFAULT_STATS;
+            return { ...DEFAULT_STATS };
         }
     }
 
@@ -1650,6 +2048,7 @@
             stats.wins += 1;
             stats.distribution[guessCount] = (stats.distribution[guessCount] || 0) + 1;
             
+            // Streak Calculation
             if (stats.lastWonIndex === todayIndex - 1) {
                 stats.currentStreak += 1;
             } else {
@@ -1664,15 +2063,13 @@
             stats.currentStreak = 0;
         }
         
-        // --- NEW: UPDATE USERNAME ---
-        // Grab the name from the logged-in user profile
-        if (window.currentUser && window.currentUser.displayName) {
-            stats.username = window.currentUser.displayName;
+        // --- IMPROVED USERNAME SAVING ---
+        if (!stats.username && window.currentUser.displayName) {
+             stats.username = window.currentUser.displayName;
         } else if (!stats.username) {
-            // Fallback if they are an old user with no name
-            stats.username = "Player " + window.currentUser.uid.substring(0, 5).toUpperCase();
+             stats.username = "Player " + window.currentUser.uid.substring(0, 5).toUpperCase();
         }
-        // ----------------------------
+        // --------------------------------
 
         stats.lastPlayedIndex = todayIndex;
         cachedStats = stats;
@@ -1680,7 +2077,6 @@
         try {
             const { doc, setDoc } = window.firestoreFunctions;
             const statsRef = doc(window.db, 'artifacts', window.appId, 'users', window.currentUser.uid, 'stats', 'daily');
-            // Save the stats (which now includes the username!)
             await setDoc(statsRef, stats);
         } catch (e) {
             console.error("Error saving stats:", e);
@@ -1689,53 +2085,84 @@
 
     // UPDATE: Pre-fill name in stats modal
     window.openStatsModal = async function() {
-        document.getElementById("stats-modal").style.display = "flex";
-        document.getElementById("modal").style.display = "none";
-        document.getElementById("help-modal").style.display = "none"; // Close help if open
-
+        const statsModal = document.getElementById("stats-modal");
         const loading = document.getElementById("stats-loading");
-        const content = document.querySelectorAll("#stats-modal .stat-box, #stats-modal h3, #guess-distribution");
+        // Select content elements to fade/unfade
+        const content = document.querySelectorAll("#stats-modal .stat-box, #stats-modal h3, #guess-distribution, #stats-modal .graph-title");
+        
+        // 1. Show Modal & Loading State
+        statsModal.style.display = "flex";
+        document.getElementById("modal").style.display = "none";
+        document.getElementById("help-modal").style.display = "none";
         
         loading.style.display = "block";
         content.forEach(el => el.style.opacity = "0.3");
         
-        // Pre-fill name input
-        if (window.currentUser && window.currentUser.displayName) {
-            document.getElementById('player-name-input').value = window.currentUser.displayName;
-        }
-
-        const stats = await fetchStats();
-
-        document.getElementById("stat-played").textContent = stats.played;
-        const winPct = stats.played > 0 ? Math.round((stats.wins / stats.played) * 100) : 0;
-        document.getElementById("stat-win-pct").textContent = winPct;
-        document.getElementById("stat-current-streak").textContent = stats.currentStreak;
-        document.getElementById("stat-max-streak").textContent = stats.maxStreak;
-
-        const distContainer = document.getElementById("guess-distribution");
-        distContainer.innerHTML = "";
-        
-        const values = Object.values(stats.distribution);
-        const maxVal = Math.max(...values, 1);
-        
-        for (let i = 1; i <= MAX_GUESSES; i++) {
-            const count = stats.distribution[i] || 0;
-            const percentage = Math.max((count / maxVal) * 100, 7); 
+        try {
+            // 2. Wait for Auth (Max 3 seconds to prevent infinite hanging)
+            if (!window.currentUser) {
+                const timeout = 3000; 
+                const startTime = Date.now();
+                await new Promise((resolve) => {
+                    const checkAuth = () => {
+                        if (window.currentUser || Date.now() - startTime > timeout) {
+                            resolve();
+                        } else {
+                            setTimeout(checkAuth, 100);
+                        }
+                    };
+                    checkAuth();
+                });
+            }
             
-            const row = document.createElement("div");
-            row.className = "graph-row";
-            
-            row.innerHTML = `
-                <div class="graph-label">${i}</div>
-                <div class="graph-bar-container">
-                    <div class="graph-bar" style="width: ${percentage}%">${count}</div>
-                </div>
-            `;
-            distContainer.appendChild(row);
-        }
+            // 3. Pre-fill name input if available
+            if (window.currentUser && window.currentUser.displayName) {
+                const nameInput = document.getElementById('player-name-input');
+                if(nameInput) nameInput.value = window.currentUser.displayName;
+            }
 
-        loading.style.display = "none";
-        content.forEach(el => el.style.opacity = "1");
+            // 4. Fetch Data
+            const stats = await fetchStats();
+
+            // 5. Update UI Numbers
+            document.getElementById("stat-played").textContent = stats.played || 0;
+            const winPct = stats.played > 0 ? Math.round((stats.wins / stats.played) * 100) : 0;
+            document.getElementById("stat-win-pct").textContent = winPct;
+            document.getElementById("stat-current-streak").textContent = stats.currentStreak || 0;
+            document.getElementById("stat-max-streak").textContent = stats.maxStreak || 0;
+
+            // 6. Update Distribution Graph
+            const distContainer = document.getElementById("guess-distribution");
+            distContainer.innerHTML = "";
+            
+            // Safety check for distribution object
+            const dist = stats.distribution || DEFAULT_STATS.distribution;
+            const values = Object.values(dist);
+            const maxVal = Math.max(...values, 1); 
+            
+            for (let i = 1; i <= MAX_GUESSES; i++) {
+                const count = dist[i] || 0;
+                // Min width 7% so bar is visible even if small
+                const percentage = Math.max((count / maxVal) * 100, 7); 
+                
+                const row = document.createElement("div");
+                row.className = "graph-row";
+                row.innerHTML = `
+                    <div class="graph-label">${i}</div>
+                    <div class="graph-bar-container">
+                        <div class="graph-bar" style="width: ${count > 0 ? percentage : 7}%">${count}</div>
+                    </div>
+                `;
+                distContainer.appendChild(row);
+            }
+
+        } catch (error) {
+            console.error("Critical error in stats modal:", error);
+        } finally {
+            // 7. ALWAYS Hide Loading Spinner (The Safety Net)
+            loading.style.display = "none";
+            content.forEach(el => el.style.opacity = "1");
+        }
     }
 
     // New Function for Help Modal
