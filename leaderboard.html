@@ -4,12 +4,15 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>TalaHula Leaderboard</title>
+    <link rel="icon" type="image/png" href="talahulafinal.png">
+    
+    <!-- ADDED: FontAwesome for the Fire Icon -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     
     <script type="module">
         import { initializeApp } from "https://www.gstatic.com/firebasejs/11.0.2/firebase-app.js";
         import { getFirestore, collectionGroup, query, orderBy, limit, getDocs, where } from "https://www.gstatic.com/firebasejs/11.0.2/firebase-firestore.js";
 
-        // --- CONFIGURATION (Same as Game) ---
         const firebaseConfig = {
             apiKey: "AIzaSyBKsGf9_qydnsTxOl1tqEa_cPTExkYCrUY", 
             authDomain: "talahula-4384e.firebaseapp.com",
@@ -22,44 +25,59 @@
         const app = initializeApp(firebaseConfig);
         const db = getFirestore(app);
 
-        // --- FETCH LEADERBOARD DATA ---
         async function fetchLeaderboard() {
             const tbody = document.getElementById('leaderboardBody');
             tbody.innerHTML = '<tr><td colspan="5" style="text-align:center; padding: 2rem;">Loading data...</td></tr>';
 
             try {
-                // Query the 'stats' collection across all users
-                // We order by 'currentStreak' descending
                 const q = query(
                     collectionGroup(db, 'stats'), 
                     orderBy('currentStreak', 'desc'), 
-                    limit(20)
+                    limit(100) 
                 );
 
                 const querySnapshot = await getDocs(q);
-                const leaderboardData = [];
+                let leaderboardData = [];
+                
+                const GAME_EPOCH = new Date("2024-01-01T00:00:00");
+                const msPerDay = 86400000;
+                const now = new Date();
+                const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+                const todayIndex = Math.floor((today - GAME_EPOCH) / msPerDay);
 
                 querySnapshot.forEach((doc) => {
-                    // Filter to ensure we only get the 'daily' stats document
                     if (doc.id === 'daily') {
                         const data = doc.data();
+                        
+                        let effectiveStreak = data.currentStreak || 0;
+                        const lastWon = data.lastWonIndex || -1;
+                        
+                        if (effectiveStreak > 0 && lastWon < todayIndex - 1) {
+                            effectiveStreak = 0;
+                        }
+
                         leaderboardData.push({
-                            id: doc.ref.parent.parent.id, // The User UID
-                            name: data.username || "Anonymous Player", // Fallback if no name saved
-                            handle: `Streak: ${data.maxStreak || 0}`, // Subtext
-                            score: data.currentStreak || 0,
-                            region: "PH", // Default
+                            id: doc.ref.parent.parent.id, 
+                            name: data.username || "Anonymous Player", 
+                            handle: `Best Streak: ${data.maxStreak || 0}`, 
+                            score: effectiveStreak,
+                            maxStreak: data.maxStreak || 0,
+                            region: "PH", 
                             avatar: (data.username || "A")[0].toUpperCase(),
-                            isOnline: isRecent(data.lastPlayedIndex) // Check if played today
+                            isOnline: data.lastPlayedIndex === todayIndex
                         });
                     }
                 });
 
-                renderLeaderboard(leaderboardData);
+                leaderboardData.sort((a, b) => {
+                    if (b.score !== a.score) return b.score - a.score;
+                    return b.maxStreak - a.maxStreak;
+                });
+
+                renderLeaderboard(leaderboardData.slice(0, 50));
 
             } catch (error) {
                 console.error("Error fetching leaderboard:", error);
-                // IF INDEX ERROR HAPPENS:
                 if (error.message.includes("requires an index")) {
                     tbody.innerHTML = '<tr><td colspan="5" style="text-align:center; color:red;">Setup Required: check console for Firebase Index link.</td></tr>';
                 } else {
@@ -68,23 +86,12 @@
             }
         }
 
-        // Helper to check if they played recently (logic based on game epoch)
-        function isRecent(lastIndex) {
-            const GAME_EPOCH = new Date("2024-01-01T00:00:00");
-            const msPerDay = 86400000;
-            const now = new Date();
-            const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-            const todayIndex = Math.floor((today - GAME_EPOCH) / msPerDay);
-            return lastIndex === todayIndex;
-        }
-
-        // --- RENDER FUNCTION ---
         function renderLeaderboard(data) {
             const tbody = document.getElementById('leaderboardBody');
             tbody.innerHTML = ''; 
 
             if (data.length === 0) {
-                tbody.innerHTML = '<tr><td colspan="5" style="text-align:center;">No streaks found yet!</td></tr>';
+                tbody.innerHTML = '<tr><td colspan="5" style="text-align:center;">No players found yet!</td></tr>';
                 return;
             }
 
@@ -92,11 +99,25 @@
                 const rank = index + 1;
                 const row = document.createElement('tr');
                 
-                // Status Logic
                 const statusHtml = player.isOnline 
                     ? `<span class="status-dot"></span> Active` 
                     : `<span class="status-dot" style="background-color:gray;"></span> Away`;
+                
+                // --- STREAK CONTAINER LOGIC ---
+                let badgeClass = 'streak-none'; 
+                let fireIcon = '';
 
+                if (player.score > 0) {
+                    fireIcon = `<i class="fa-solid fa-fire"></i>`;
+                    
+                    if (player.score >= 100) badgeClass = 'streak-green-bg';
+                    else if (player.score >= 50) badgeClass = 'streak-purple-bg';
+                    else if (player.score >= 10) badgeClass = 'streak-blue-bg';
+                    else if (player.score >= 5) badgeClass = 'streak-red-bg';
+                    else badgeClass = 'streak-orange-bg'; // 1-4
+                }
+
+                // Row Structure
                 row.innerHTML = `
                     <td class="rank-cell"><span class="rank-badge">${rank}</span></td>
                     <td>
@@ -110,17 +131,19 @@
                     </td>
                     <td>${player.region}</td>
                     <td>${statusHtml}</td>
-                    <td class="score-cell">${player.score.toLocaleString()}</td>
+                    <td class="score-cell">
+                        <div class="streak-badge ${badgeClass}">
+                            ${fireIcon} <span>${player.score.toLocaleString()}</span>
+                        </div>
+                    </td>
                 `;
                 tbody.appendChild(row);
             });
         }
 
-        // --- INIT ---
         document.addEventListener('DOMContentLoaded', () => {
             fetchLeaderboard();
             
-            // Theme Logic
             const themeToggleBtn = document.getElementById('themeToggle');
             const htmlElement = document.documentElement;
             const savedTheme = localStorage.getItem('theme') || 'light';
@@ -137,6 +160,7 @@
 
     <style>
         :root {
+            /* Restored Original Colors */
             --ph-yellow: #FFE97F;
             --ph-blue:   #4773CC;
             --ph-red:    #BF4242;
@@ -148,12 +172,9 @@
             --shadow: 0 4px 6px rgba(0,0,0,0.2);
             --btn-bg: var(--ph-blue);
             --btn-text: #ffffff;
-            --rank-1-bg: var(--ph-yellow); 
-            --rank-1-text: #3e2723;
-            --rank-2-bg: var(--ph-white);
-            --rank-2-text: #3e2723;
-            --rank-3-bg: var(--ph-red);
-            --rank-3-text: #ffffff;
+            --rank-1-bg: var(--ph-yellow); --rank-1-text: #3e2723;
+            --rank-2-bg: var(--ph-white); --rank-2-text: #3e2723;
+            --rank-3-bg: var(--ph-red); --rank-3-text: #ffffff;
             --row-hover: rgba(71, 115, 204, 0.1);
             --text-secondary: #795548;
         }
@@ -165,23 +186,47 @@
             --modal-bg: rgba(38, 50, 56, 0.95);
             --btn-bg: #FBC02D;
             --btn-text: #263238;
-            --rank-1-bg: #FBC02D;
-            --rank-1-text: #263238;
-            --rank-2-bg: #546e7a;
-            --rank-2-text: #ffffff;
-            --rank-3-bg: #D32F2F;
-            --rank-3-text: #ffffff;
+            --rank-1-bg: #FBC02D; --rank-1-text: #263238;
+            --rank-2-bg: #546e7a; --rank-2-text: #ffffff;
+            --rank-3-bg: #D32F2F; --rank-3-text: #ffffff;
             --row-hover: rgba(255, 255, 255, 0.05);
             --text-secondary: #b0bec5;
         }
 
-        * {
-            box-sizing: border-box;
-            margin: 0;
-            padding: 0;
-            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
-            transition: background-color 0.3s, color 0.3s, border-color 0.3s;
+        /* --- STREAK BADGE STYLES --- */
+        .streak-badge {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            gap: 6px;
+            padding: 4px 12px;
+            border-radius: 20px;
+            font-weight: 800; /* Extra bold text */
+            font-size: 0.95rem;
+            min-width: 70px; 
+            box-shadow: 0 1px 2px rgba(0,0,0,0.1);
         }
+        
+        .streak-badge i { font-size: 0.9rem; }
+
+        .streak-none { 
+            background-color: rgba(0,0,0,0.05); 
+            color: var(--text-secondary); 
+            opacity: 0.7; 
+            box-shadow: none;
+        }
+        [data-theme="dark"] .streak-none { background-color: rgba(255,255,255,0.05); }
+
+        /* Updated Colors: Light Background + Very Dark Text for Noticeable Contrast */
+        .streak-red-bg { background-color: #ffcdd2; color: #8a0000; }      /* Light Red BG / Dark Red Text */
+        .streak-orange-bg { background-color: #ffe0b2; color: #bf360c; }   /* Light Orange BG / Deep Rust Text */
+        .streak-blue-bg { background-color: #bbdefb; color: #001e61; }     /* Light Blue BG / Navy Text */
+        .streak-purple-bg { background-color: #e1bee7; color: #30005a; }   /* Light Purple BG / Deep Violet Text */
+        .streak-green-bg { background-color: #c8e6c9; color: #003d00; }    /* Light Green BG / Dark Green Text */
+
+        
+        /* General Styles */
+        * { box-sizing: border-box; margin: 0; padding: 0; font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; transition: background-color 0.3s, color 0.3s, border-color 0.3s; }
 
         body {
             background-color: #fcf6e6;
@@ -227,7 +272,6 @@
             border-image: linear-gradient(to right, var(--ph-blue) 33%, var(--ph-red) 33%, var(--ph-red) 66%, var(--ph-yellow) 66%) 1;
         }
 
-        /* Container for Back Button + Title */
         .header-left {
             display: flex;
             align-items: center;
@@ -250,7 +294,6 @@
             text-transform: uppercase;
         }
 
-        /* Reusable Style for both Back Button and Theme Toggle */
         .nav-btn {
             background: none;
             border: 2px solid var(--border-color);
@@ -264,7 +307,7 @@
             align-items: center;
             gap: 0.5rem;
             text-transform: uppercase;
-            text-decoration: none; /* For the link */
+            text-decoration: none;
             transition: all 0.2s ease;
         }
 
@@ -359,13 +402,11 @@
         .user-handle { font-size: 0.8rem; color: var(--text-secondary); font-weight: 600; }
         
         .score-cell {
-            font-weight: 900;
-            color: var(--btn-bg);
             text-align: right;
-            font-family: 'Courier New', Courier, monospace;
-            font-size: 1.1rem;
+            /* FIX: Removed 'display: flex' to prevent table layout bugs */
+            vertical-align: middle;
+            white-space: nowrap; /* Keeps badge on one line */
         }
-        [data-theme="light"] .score-cell { color: var(--ph-blue); }
 
         .status-dot {
             height: 10px;
@@ -376,13 +417,73 @@
             border: 1px solid rgba(0,0,0,0.1);
         }
         @keyframes pop { 0% { transform: scale(1); } 50% { transform: scale(1.2); } 100% { transform: scale(1); } }
+
+        /* --- MOBILE OPTIMIZATIONS (Original Phone View) --- */
+        @media (max-width: 600px) {
+            body {
+                padding: 0.5rem;
+            }
+            
+            header {
+                padding: 0.8rem;
+                margin-bottom: 1rem;
+            }
+
+            .header-title h1 {
+                font-size: 1rem; 
+            }
+            .header-title p {
+                font-size: 0.7rem;
+            }
+
+            .nav-btn span {
+                display: none;
+            }
+            .nav-btn {
+                padding: 0.4rem; 
+            }
+
+            table {
+                min-width: auto;
+                width: 100%;
+            }
+
+            /* Hide extra columns */
+            th:nth-child(3), td:nth-child(3),
+            th:nth-child(4), td:nth-child(4) {
+                display: none;
+            }
+
+            th, td {
+                padding: 0.75rem 0.5rem;
+                font-size: 0.85rem;
+            }
+
+            .avatar {
+                width: 32px;
+                height: 32px;
+                font-size: 0.9rem;
+            }
+            .rank-badge {
+                width: 28px;
+                height: 28px;
+                font-size: 0.8rem;
+            }
+            
+            .username {
+                font-size: 0.9rem;
+            }
+            .user-handle {
+                font-size: 0.7rem;
+            }
+        }
     </style>
 </head>
 <body>
     <div class="container">
         <header>
             <div class="header-left">
-                <!-- NEW BACK BUTTON -->
+                <!-- OLD BACK BUTTON -->
                 <a href="menu.html" class="nav-btn" aria-label="Back to Menu">
                     <svg viewBox="0 0 24 24">
                         <line x1="19" y1="12" x2="5" y2="12"></line>
@@ -429,7 +530,8 @@
                         </tr>
                     </thead>
                     <tbody id="leaderboardBody">
-                        </tbody>
+                        <!-- Populated via JS -->
+                    </tbody>
                 </table>
             </div>
         </div>
